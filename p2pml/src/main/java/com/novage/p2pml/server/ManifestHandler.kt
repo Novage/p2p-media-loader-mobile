@@ -62,10 +62,10 @@ internal class ManifestHandler(
             handleUpdate(decodedManifestUrl, needsInitialSetup)
             call.respondText(modifiedManifest, ContentType.parse(MPEGURL_CONTENT_TYPE))
         } catch (e: Exception) {
-            call.respondText(
-                "Failed to process manifest: ${e.message}",
-                status = HttpStatusCode.InternalServerError,
-            )
+            val message = "Failed to process manifest request: ${e.message}"
+
+            Log.e(TAG, message)
+            call.respondText(message, status = HttpStatusCode.InternalServerError)
         }
     }
 
@@ -90,7 +90,7 @@ internal class ManifestHandler(
                 } ?: throw Exception("updateStreamJson is null")
             }
         } catch (e: Exception) {
-            Log.e("handleUpdate", "Unexpected error occurred: ${e.message}")
+            Log.e(TAG, "Unexpected error occurred: ${e.message}")
         }
     }
 
@@ -116,7 +116,9 @@ internal class ManifestHandler(
 
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("Failed to fetch manifest: $manifestUrl")
+                    throw IllegalStateException(
+                        "Failed to fetch manifest: $manifestUrl Response code: ${response.code}",
+                    )
                 }
 
                 val body =
@@ -132,5 +134,9 @@ internal class ManifestHandler(
         mutex.withLock {
             isInitialManifestProcessed = false
         }
+    }
+
+    companion object {
+        private const val TAG = "ManifestHandler"
     }
 }

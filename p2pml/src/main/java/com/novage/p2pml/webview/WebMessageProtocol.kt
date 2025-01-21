@@ -2,12 +2,12 @@ package com.novage.p2pml.webview
 
 import android.annotation.SuppressLint
 import android.net.Uri
-import android.util.Log
 import android.webkit.WebView
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebMessagePortCompat
 import androidx.webkit.WebViewCompat
 import com.novage.p2pml.SegmentRequest
+import com.novage.p2pml.logger.Logger
 import com.novage.p2pml.utils.SegmentAbortedException
 import com.novage.p2pml.utils.SegmentNotFoundException
 import kotlinx.coroutines.CompletableDeferred
@@ -46,14 +46,18 @@ internal class WebMessageProtocol(
                     port: WebMessagePortCompat,
                     message: WebMessageCompat?,
                 ) {
-                    when (message?.type) {
-                        WebMessageCompat.TYPE_ARRAY_BUFFER -> {
-                            handleSegmentIdBytes(message.arrayBuffer)
-                        }
+                    try {
+                        when (message?.type) {
+                            WebMessageCompat.TYPE_ARRAY_BUFFER -> {
+                                handleSegmentIdBytes(message.arrayBuffer)
+                            }
 
-                        WebMessageCompat.TYPE_STRING -> {
-                            handleMessage(message.data!!)
+                            WebMessageCompat.TYPE_STRING -> {
+                                handleMessage(message.data!!)
+                            }
                         }
+                    } catch (e: Exception) {
+                        Logger.e(TAG, "Error while handling message: ${e.message}", e)
                     }
                 }
             },
@@ -66,15 +70,8 @@ internal class WebMessageProtocol(
                 ?: throw IllegalStateException("Received segment bytes without a segment ID")
 
         coroutineScope.launch {
-            val deferred = getSegmentResponseCallback(requestId)
-
-            if (deferred == null) {
-                Log.e(
-                    "WebMessageProtocol",
-                    "Error: No deferred found for segment ID: $requestId",
-                )
-                return@launch
-            }
+            val deferred =
+                getSegmentResponseCallback(requestId) ?: throw IllegalStateException("No deferred found for request ID: $requestId")
 
             deferred.complete(arrayBuffer)
             removeSegmentResponseCallback(requestId)
@@ -99,14 +96,9 @@ internal class WebMessageProtocol(
             val errorType = errorParts[2]
             val segmentId = message.substringAfter("|")
 
-            val deferredSegmentBytes = getSegmentResponseCallback(requestId)
-            if (deferredSegmentBytes == null) {
-                Log.e(
-                    "WebMessageProtocol",
-                    "Error: No deferred found for segment ID: $segmentId",
-                )
-                return@launch
-            }
+            val deferredSegmentBytes =
+                getSegmentResponseCallback(requestId)
+                    ?: throw IllegalStateException("No deferred found for request ID: $requestId")
 
             val exception =
                 when (errorType) {
@@ -200,5 +192,9 @@ internal class WebMessageProtocol(
     @SuppressLint("RequiresFeature")
     suspend fun clear() {
         resetSegmentResponseCallbacks()
+    }
+
+    companion object {
+        private const val TAG = "WebMessageProtocol"
     }
 }

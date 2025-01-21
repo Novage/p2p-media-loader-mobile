@@ -3,6 +3,7 @@ package com.novage.p2pml.server
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import com.novage.p2pml.logger.Logger
 import com.novage.p2pml.parser.HlsManifestParser
 import com.novage.p2pml.utils.P2PStateManager
 import com.novage.p2pml.utils.SegmentAbortedException
@@ -39,9 +40,15 @@ internal class SegmentHandler(
         val decodedSegmentUrl = Utils.decodeBase64Url(segmentUrlParam)
         val byteRange = call.request.headers[HttpHeaders.Range]
 
+        Logger.d(TAG, "Handling segment request for $decodedSegmentUrl")
+
         try {
             val isCurrentSegment = parser.isCurrentSegment(decodedSegmentUrl)
             if (p2pEngineStateManager.isEngineDisabled() || !isCurrentSegment) {
+                Logger.w(
+                    TAG,
+                    "P2P engine is disabled or segment is not current, falling back to direct fetch for $decodedSegmentUrl.",
+                )
                 fetchAndRespondWithSegment(call, decodedSegmentUrl, byteRange)
                 return
             }
@@ -51,24 +58,18 @@ internal class SegmentHandler(
                     ?: throw IllegalStateException("P2P engine is disabled")
             val segmentBytes = deferredSegmentBytes.await()
 
+            Logger.d(TAG, "Segment bytes received for $decodedSegmentUrl")
             respondSegment(call, segmentBytes, byteRange != null)
         } catch (e: SegmentAbortedException) {
-            Log.w("SegmentHandler", "Segment request aborted: ${e.message}")
-            call.respondText(
-                "Segment aborted",
-                status = HttpStatusCode.RequestTimeout,
-            )
+            val message = "Segment $decodedSegmentUrl | ${e.message}"
+
+            Logger.w(TAG, message)
+            call.respondText(message, status = HttpStatusCode.RequestTimeout)
         } catch (e: SegmentNotFoundException) {
-            Log.e(
-                "SegmentHandler",
-                "Segment not found: ${e.message}. Falling back to direct fetch.",
-            )
+            Logger.e(TAG, "Segment $decodedSegmentUrl not found: ${e.message}, falling back to direct fetch.")
             fetchAndRespondWithSegment(call, decodedSegmentUrl, byteRange)
         } catch (e: Exception) {
-            Log.e(
-                "SegmentHandler",
-                "Error fetching segment: ${e.message}. Falling back to direct fetch.",
-            )
+            Logger.e(TAG, "Error handling segment $decodedSegmentUrl request: ${e.message}, falling back to direct fetch.", e)
             fetchAndRespondWithSegment(call, decodedSegmentUrl, byteRange)
         }
     }
@@ -108,22 +109,27 @@ internal class SegmentHandler(
 
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                Log.e(
-                    "SegmentHandler",
-                    "Error fetching segment through direct fetch: ${response.code}",
-                )
-                call.respondText(
-                    "Error fetching segment",
-                    status = HttpStatusCode.fromValue(response.code),
-                )
+                val message = "Failed to direct fetch segment: ${response.code}"
+
+                Log.e(TAG, message)
+                call.respondText(message, status = HttpStatusCode.fromValue(response.code))
                 return@withContext
             }
 
             val segmentBytes =
                 response.body?.use { it.bytes() }
-                    ?: throw Exception("Empty response body")
+                    ?: run {
+                        val message = "Failed to read segment response body. URL: $filteredUrl"
+
+                        Logger.e(TAG, message)
+                        throw IllegalStateException(message)
+                    }
 
             respondSegment(call, segmentBytes, byteRange != null)
         }
+    }
+
+    companion object {
+        private const val TAG = "SegmentHandler"
     }
 }
