@@ -13,73 +13,72 @@ sealed class CoreEventMap<T> {
      *     CoreEventMaps.OnSegmentLoaded
      * from Java code.
      */
-    @Suppress("EXPOSED_PROPERTY_TYPE")
     companion object {
         /**
          * Fired when a segment is fully downloaded and available for use.
          */
         @JvmField
-        val OnSegmentLoaded = OnSegmentLoadedEvent
+        val OnSegmentLoaded: CoreEventMap<SegmentLoadDetails> = OnSegmentLoadedEvent
 
         /**
          * Fired at the beginning of a segment download process.
          */
         @JvmField
-        val OnSegmentStart = OnSegmentStartEvent
+        val OnSegmentStart: CoreEventMap<SegmentStartDetails> = OnSegmentStartEvent
 
         /**
          * Fired when an error occurs during the download of a segment.
          */
         @JvmField
-        val OnSegmentError = OnSegmentErrorEvent
+        val OnSegmentError: CoreEventMap<SegmentErrorDetails> = OnSegmentErrorEvent
 
         /**
          * Fired if the download of a segment is aborted before completion.
          */
         @JvmField
-        val OnSegmentAbort = OnSegmentAbortEvent
+        val OnSegmentAbort: CoreEventMap<SegmentAbortDetails> = OnSegmentAbortEvent
 
         /**
          * Fired when a new peer-to-peer connection is established.
          */
         @JvmField
-        val OnPeerConnect = OnPeerConnectEvent
+        val OnPeerConnect: CoreEventMap<PeerDetails> = OnPeerConnectEvent
 
         /**
          * Fired when an existing peer-to-peer connection is closed.
          */
         @JvmField
-        val OnPeerClose = OnPeerCloseEvent
+        val OnPeerClose: CoreEventMap<PeerDetails> = OnPeerCloseEvent
 
         /**
          * Fired when an error occurs during a peer-to-peer connection.
          */
         @JvmField
-        val OnPeerError = OnPeerErrorEvent
+        val OnPeerError: CoreEventMap<PeerErrorDetails> = OnPeerErrorEvent
 
         /**
          * Fired after a chunk of data from a segment has been successfully downloaded.
          */
         @JvmField
-        val OnChunkDownloaded = OnChunkDownloadedEvent
+        val OnChunkDownloaded: CoreEventMap<ChunkDownloadedDetails> = OnChunkDownloadedEvent
 
         /**
          * Fired when a chunk of data has been successfully uploaded to a peer.
          */
         @JvmField
-        val OnChunkUploaded = OnChunkUploadedEvent
+        val OnChunkUploaded: CoreEventMap<ChunkUploadedDetails> = OnChunkUploadedEvent
 
         /**
          * Fired when an error occurs during the tracker request process.
          */
         @JvmField
-        val OnTrackerError = OnTrackerErrorEvent
+        val OnTrackerError: CoreEventMap<TrackerErrorDetails> = OnTrackerErrorEvent
 
         /**
          * Fired when a warning occurs during the tracker request process.
          */
         @JvmField
-        val OnTrackerWarning = OnTrackerWarningEvent
+        val OnTrackerWarning: CoreEventMap<TrackerWarningDetails> = OnTrackerWarningEvent
     }
 
     private data object OnSegmentLoadedEvent : CoreEventMap<SegmentLoadDetails>()
