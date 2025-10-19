@@ -8,7 +8,6 @@ plugins {
     id("maven-publish")
 }
 
-
 android {
     namespace = "com.novage.p2pml"
     compileSdk = 36
