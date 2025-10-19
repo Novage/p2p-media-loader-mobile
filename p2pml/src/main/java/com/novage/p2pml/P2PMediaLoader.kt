@@ -20,7 +20,6 @@ import com.novage.p2pml.utils.P2PStateManager
 import com.novage.p2pml.utils.Utils
 import com.novage.p2pml.webview.WebViewManager
 import io.ktor.http.encodeURLParameter
-import io.ktor.http.encodeURLQueryComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
