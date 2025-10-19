@@ -1,7 +1,7 @@
 # P2P Media Loader Mobile
 
 ![Platform: Android](https://img.shields.io/badge/platform-Android-blue) 
-[![Kotlin](https://img.shields.io/badge/kotlin-2.1.0-blue.svg?logo=kotlin)](https://kotlinlang.org) 
+[![Kotlin](https://img.shields.io/badge/kotlin-2.2.20-blue.svg?logo=kotlin)](https://kotlinlang.org) 
 [![JitPack](https://jitpack.io/v/Novage/p2p-media-loader-mobile.svg)](https://jitpack.io/#Novage/p2p-media-loader-mobile)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Novage/p2p-media-loader-mobile/check-build.yml)](https://github.com/Novage/p2p-media-loader-mobile/actions) 
 
