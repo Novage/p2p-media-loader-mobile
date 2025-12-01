@@ -45,7 +45,9 @@
           if (this.core) {
             this.destroyP2PEngine();
           }
-          this.core = new Core(this.coreConfig ?? {});
+
+          const cfg = this.coreConfig != null ? this.coreConfig : {};
+          this.core = new Core(cfg);
 
           this.core.addEventListener(
             "onChunkDownloaded",
