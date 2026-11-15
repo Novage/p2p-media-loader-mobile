@@ -17,6 +17,8 @@ test("a live playlist gives each segment its URL, duration, sequence and map", (
     "#EXT-X-PROGRAM-DATE-TIME:2026-11-15T13:19:12.000Z",
     "#EXTINF:6.000,",
     "seg_0057.m4s?loop=43687",
+    // The map stays in effect: BBB starts each loop of its content so.
+    "#EXT-X-DISCONTINUITY",
     "#EXTINF:5.5,title",
     "/root/seg_0058.m4s",
     '#EXT-X-PART:DURATION=1.0,URI="part.m4s"',

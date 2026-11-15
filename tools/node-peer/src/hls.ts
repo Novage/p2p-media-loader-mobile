@@ -89,11 +89,9 @@ export const parseMediaPlaylist = (
       case "#EXT-X-ENDLIST":
         playlist.endList = true;
         break;
-      case "#EXT-X-MAP": {
-        const uri = /URI="([^"]*)"/.exec(value)?.[1];
-        initUrl = uri === undefined ? undefined : resolve(uri);
+      case "#EXT-X-MAP":
+        initUrl = resolve(/URI="([^"]*)"/.exec(value)![1]);
         break;
-      }
     }
   }
   return playlist;
