@@ -7,6 +7,9 @@
     // web repo compiles the core with the DOM lib.
     "lib": ["ESNext", "DOM"],
     "types": ["node"],
+    // node-datachannel's declarations do not match TypeScript 6's DOM lib.
+    // The web repo skips library checks too.
+    "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
     // Node runs the sources directly by stripping the types, so only syntax
@@ -15,5 +18,5 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }

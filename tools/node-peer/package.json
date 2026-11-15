@@ -9,11 +9,13 @@
   },
   "scripts": {
     "pack-core": "bash scripts/pack-core.sh",
-    "start": "node src/main.ts",
+    "start": "node --no-experimental-webstorage src/main.ts",
+    "test": "node --no-experimental-webstorage --test \"test/**/*.test.ts\"",
     "type-check": "tsc --noEmit",
     "format": "prettier --write ."
   },
   "dependencies": {
+    "node-datachannel": "^0.33.6",
     "p2p-media-loader-core": "file:.core/p2p-media-loader-core.tgz"
   },
   "devDependencies": {

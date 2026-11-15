@@ -21,7 +21,23 @@ pnpm start
 ```
 
 `pnpm start` runs `src/main.ts` directly; Node strips the types. Check the
-types with `pnpm type-check`.
+types with `pnpm type-check`. `pnpm test` checks that the WebRTC the tool
+gives the core works the way the core uses it.
+
+## How the core runs
+
+The tool loads the core's self-contained HLS bundle,
+`dist/p2p-media-loader-core-hls.es.js`, not the package's entry points: a
+mobile JS engine also loads one file, with no package resolution. The bundle
+has the diagnostics ledger compiled out.
+
+Before the core loads, `src/browser-globals.ts` gives it what Node lacks:
+WebRTC from `node-datachannel`, and `window`, which is the global object as in
+a browser, because the core reads its APIs from `window`. Node runs without
+Web Storage (`--no-experimental-webstorage`), so the core's logger finds no
+`localStorage`, as in a browser that blocks it. The logger reads
+`process.env.DEBUG` then: `DEBUG='p2pml-core:*' pnpm start` shows the core's
+logs.
 
 ## The core
 
