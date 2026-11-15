@@ -11,12 +11,21 @@ const { values, positionals } = parseArgs({
     minutes: { type: "string", default: "2" },
     // A swarm of its own, which no web peer joins: the core over HTTP alone.
     isolated: { type: "boolean", default: false },
+    // A test swarm the web peers under test join with the demo's ?swarmId=.
+    swarm: { type: "string" },
   },
 });
 const streamUrl =
   positionals[0] ?? "https://live.novage.workers.dev/bbb/live.m3u8";
 const minutes = Number(values.minutes);
 if (!(minutes > 0)) throw new Error("--minutes must be a positive number");
+if (values.isolated && values.swarm !== undefined) {
+  throw new Error("--isolated and --swarm cannot be used together");
+}
+// An empty ID is no ID, as the demo reads an empty ?swarmId=.
+const swarmId = values.isolated
+  ? `node-peer-${randomUUID()}`
+  : values.swarm || undefined;
 
 const source = readFileSync(
   new URL("../.core/SOURCE", import.meta.url),
@@ -29,7 +38,7 @@ console.log(`core loaded, peer protocol: ${api.PEER_PROTOCOL_VERSION}`);
 
 const core = new api.Core({
   manifestParsers: [api.hlsManifestParser],
-  swarmId: values.isolated ? `node-peer-${randomUUID()}` : undefined,
+  swarmId,
 });
 try {
   const summary = await play({

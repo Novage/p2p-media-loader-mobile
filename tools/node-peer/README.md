@@ -23,11 +23,19 @@ pnpm start
 `pnpm start` runs `src/main.ts` directly; Node strips the types. Check the
 types with `pnpm type-check`.
 
-`pnpm start [stream URL] [--minutes N] [--isolated]` plays a live stream
-through the core, the way HLS.js with the P2P Media Loader adapter plays it in
-a browser, for N minutes (default 2). The default stream is
-`https://live.novage.workers.dev/bbb/live.m3u8`. `--isolated` puts the core
-in a swarm of its own, which no web peer joins.
+`pnpm start [stream URL] [--minutes N] [--isolated | --swarm ID]` plays a
+live stream through the core, the way HLS.js with the P2P Media Loader adapter
+plays it in a browser, for N minutes (default 2). The default stream is
+`https://live.novage.workers.dev/bbb/live.m3u8`. The swarm:
+
+- by default, the core's: the master playlist's URL, which every viewer of
+  the stream joins, strangers included;
+- `--isolated`: a swarm of its own, which no web peer joins;
+- `--swarm ID`: a test swarm. Web peers under test join it with the same ID
+  in the demo's `?swarmId=`, so that no stranger's peer mixes with them. They
+  meet only on the same stream URL and the same quality: the infohash holds
+  the stream's place in the master playlist (`main0` is the first). Use an
+  ID of letters, digits and `-`, which the demo's URL does not change.
 
 The player plays one quality, the highest bitrate, where web viewers on a
 good connection play. It starts at the core's live delay, buffers up to the
