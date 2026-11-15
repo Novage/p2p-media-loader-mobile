@@ -1,6 +1,0 @@
-jdk:
-  - openjdk17
-
-publish:
-  target: p2pml
-
