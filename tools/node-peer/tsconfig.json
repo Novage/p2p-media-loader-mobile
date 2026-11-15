@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    // The core's declarations use DOM types (RTCIceServer, Request), as the
+    // web repo compiles the core with the DOM lib.
+    "lib": ["ESNext", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    // Node runs the sources directly by stripping the types, so only syntax
+    // that can be erased is allowed, and imports name the .ts files.
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src"]
+}
