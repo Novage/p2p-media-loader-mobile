@@ -20,10 +20,35 @@ const REPORT_INTERVAL_MS = 250;
 // HLS.js's default number of retries for a fragment error.
 const MAX_RETRIES = 6;
 
+/** What a run measured. */
+export type Summary = {
+  /** How long the run played, in seconds. */
+  seconds: number;
+  /** From the start of the run to the first playback, in seconds. */
+  startupSeconds?: number;
+  stalls: number;
+  stalledSeconds: number;
+  /** How far the playhead was behind the live edge at the end, in seconds. */
+  liveDistance: number;
+  segments: { core: number; direct: number; failed: number };
+  /** Segment load times, in milliseconds. */
+  loadMs: { mean: number; max: number };
+  reloads: { changed: number; unchanged: number; failed: number };
+  /** What the core downloaded over HTTP and from peers, and uploaded. */
+  bytes: { http: number; p2p: number; uploaded: number };
+  peers: { connected: number; mostAtOnce: number };
+  trackerErrors: number;
+  /** The error that ended the run, if one did. */
+  error?: unknown;
+};
+
 const megabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
 
-/** Plays for `seconds`. Throws on an error that ends the run. */
-export async function play(options: PlayOptions): Promise<void> {
+/**
+ * Plays for `seconds`. Throws when the run cannot start; an error after the
+ * start ends the run and is returned in the summary.
+ */
+export async function play(options: PlayOptions): Promise<Summary> {
   const { core, liveDelayFor, playerBufferFor, streamUrl, seconds, log } =
     options;
   const startedAt = performance.now();
@@ -74,11 +99,37 @@ export async function play(options: PlayOptions): Promise<void> {
     `${main.streamId}: live delay ${target.delay} s, buffer up to ${maxBuffer} s`,
   );
 
-  const bytes = { http: 0, p2p: 0 };
+  const segmentCounts = { core: 0, direct: 0, failed: 0 };
+  const reloads = { changed: 0, unchanged: 0, failed: 0 };
+  const bytes = { http: 0, p2p: 0, uploaded: 0 };
+  const peers = { connected: 0, mostAtOnce: 0 };
+  let openPeers = 0;
+  let trackerErrors = 0;
+  let startupSeconds: number | undefined;
+  let loadMsTotal = 0;
+  let loadMsMax = 0;
+
   const onChunkDownloaded = (length: number, source: "http" | "p2p") => {
     bytes[source] += length;
   };
+  const onChunkUploaded = (length: number) => {
+    bytes.uploaded += length;
+  };
+  const onPeerConnect = () => {
+    peers.connected++;
+    peers.mostAtOnce = Math.max(peers.mostAtOnce, ++openPeers);
+  };
+  const onPeerClose = () => {
+    openPeers--;
+  };
+  const onTrackerError = () => {
+    trackerErrors++;
+  };
   core.addEventListener("onChunkDownloaded", onChunkDownloaded);
+  core.addEventListener("onChunkUploaded", onChunkUploaded);
+  core.addEventListener("onPeerConnect", onPeerConnect);
+  core.addEventListener("onPeerClose", onPeerClose);
+  core.addEventListener("onTrackerError", onTrackerError);
 
   // Every handler moves the model to now first, so that the time before a
   // segment arrived is played, or stalled, before the segment is buffered.
@@ -126,13 +177,13 @@ export async function play(options: PlayOptions): Promise<void> {
     }
 
     loading = true;
-    const requestedAt = performance.now();
     try {
       // The core passes init segments through: the player loads them.
       if (segment.initUrl !== undefined && segment.initUrl !== initUrl) {
         await fetchBytes(segment.initUrl);
         initUrl = segment.initUrl;
       }
+      const requestedAt = performance.now();
       advance();
       core.updatePlayback(model.state());
       const viaCore = core.isSegmentLoadable(segment.url);
@@ -144,6 +195,12 @@ export async function play(options: PlayOptions): Promise<void> {
       lastLoaded = segment.sequence;
       retries = 0;
       const ms = Math.round(performance.now() - requestedAt);
+      segmentCounts[viaCore ? "core" : "direct"]++;
+      loadMsTotal += ms;
+      loadMsMax = Math.max(loadMsMax, ms);
+      if (startupSeconds === undefined && model.started) {
+        startupSeconds = (performance.now() - startedAt) / 1000;
+      }
       say(
         `#${segment.sequence} ${viaCore ? "core" : "direct"} ` +
           `${megabytes(data.byteLength)} MB in ${ms} ms | ` +
@@ -154,6 +211,7 @@ export async function play(options: PlayOptions): Promise<void> {
     } catch (error) {
       if (stopped) return;
       say(`#${segment.sequence} failed: ${String(error)}`);
+      segmentCounts.failed++;
       // HLS.js's default for a fragment error: 6 retries, 1 s apart at
       // first, the wait doubled each time up to 8 s.
       if (retries === MAX_RETRIES) {
@@ -209,12 +267,15 @@ export async function play(options: PlayOptions): Promise<void> {
             throw new Error("the playhead left the live window");
           }
           void loadNext();
-          scheduleRefresh(playlist.segments.at(-1)?.sequence !== previous);
+          const changed = playlist.segments.at(-1)?.sequence !== previous;
+          reloads[changed ? "changed" : "unchanged"]++;
+          scheduleRefresh(changed);
         },
         // Tried again as after a playlist that did not change.
         (error: unknown) => {
           if (stopped) return;
           say(`playlist refresh failed: ${String(error)}`);
+          reloads.failed++;
           scheduleRefresh(false);
         },
       )
@@ -231,5 +292,50 @@ export async function play(options: PlayOptions): Promise<void> {
   clearTimeout(endTimer);
   abort.abort();
   core.removeEventListener("onChunkDownloaded", onChunkDownloaded);
-  if (fatal !== undefined) throw fatal;
+  core.removeEventListener("onChunkUploaded", onChunkUploaded);
+  core.removeEventListener("onPeerConnect", onPeerConnect);
+  core.removeEventListener("onPeerClose", onPeerClose);
+  core.removeEventListener("onTrackerError", onTrackerError);
+
+  advance();
+  const loaded = segmentCounts.core + segmentCounts.direct;
+  return {
+    seconds: (performance.now() - startedAt) / 1000,
+    startupSeconds,
+    stalls: model.stalls,
+    stalledSeconds: model.stalledSeconds,
+    liveDistance: segments.at(-1)!.end - model.playhead,
+    segments: segmentCounts,
+    loadMs: { mean: loaded ? loadMsTotal / loaded : 0, max: loadMsMax },
+    reloads,
+    bytes,
+    peers,
+    trackerErrors,
+    error: fatal,
+  };
 }
+
+/** The summary as lines to print. */
+export const formatSummary = (summary: Summary): string[] => {
+  const { segments, loadMs, reloads, bytes, peers } = summary;
+  const downloaded = bytes.http + bytes.p2p;
+  const share = downloaded ? (100 * bytes.p2p) / downloaded : 0;
+  const startup =
+    summary.startupSeconds === undefined
+      ? "playback did not start"
+      : `startup ${summary.startupSeconds.toFixed(1)} s`;
+  return [
+    `played     ${(summary.seconds / 60).toFixed(1)} min, ${startup}`,
+    `stalls     ${summary.stalls} (${summary.stalledSeconds.toFixed(1)} s)`,
+    `live edge  ${summary.liveDistance.toFixed(1)} s behind at the end`,
+    `segments   ${segments.core} through the core, ${segments.direct} direct, ` +
+      `${segments.failed} failed; load ${Math.round(loadMs.mean)} ms mean, ` +
+      `${loadMs.max} ms max`,
+    `bytes      http ${megabytes(bytes.http)} MB, p2p ${megabytes(bytes.p2p)} MB ` +
+      `(P2P ${share.toFixed(1)} %), uploaded ${megabytes(bytes.uploaded)} MB`,
+    `peers      ${peers.connected} connected, at most ${peers.mostAtOnce} ` +
+      `at once; ${summary.trackerErrors} tracker errors`,
+    `playlist   ${reloads.changed} reloads changed, ${reloads.unchanged} ` +
+      `unchanged, ${reloads.failed} failed`,
+  ];
+};

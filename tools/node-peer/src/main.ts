@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { cleanup } from "node-datachannel";
-import { play } from "./headless-player.ts";
+import { formatSummary, play } from "./headless-player.ts";
 import { loadCore } from "./load-core.ts";
 
 const { values, positionals } = parseArgs({
@@ -32,7 +32,7 @@ const core = new api.Core({
   swarmId: values.isolated ? `node-peer-${randomUUID()}` : undefined,
 });
 try {
-  await play({
+  const summary = await play({
     core,
     liveDelayFor: api.liveDelayFor,
     playerBufferFor: api.playerBufferFor,
@@ -40,6 +40,8 @@ try {
     seconds: minutes * 60,
     log: console.log,
   });
+  console.log(["summary", ...formatSummary(summary)].join("\n  "));
+  if (summary.error !== undefined) throw summary.error;
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

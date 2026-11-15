@@ -43,6 +43,25 @@ retries a failed segment on HLS.js's schedule. It prints:
   itself; its size and load time; the buffer ahead and the stalls so far; and
   the bytes the core downloaded so far over HTTP and from peers.
 
+At the end it prints a summary, also after an error that ends a run which
+has started:
+
+- `played`: the run's length, and the time from the start to the first
+  playback;
+- `stalls`: how many times the playhead reached the end of the buffer, and
+  for how long in all;
+- `live edge`: how far the playhead was behind the newest segment at the end.
+  It is one sample and grows by up to a target duration between playlist
+  reloads, so a smaller difference between two runs is noise;
+- `segments`: through the core, loaded directly, and failed attempts; the
+  mean and the longest load time;
+- `bytes`: what the core downloaded over HTTP and from peers, the P2P share
+  of it, and what it uploaded to peers;
+- `peers`: peer connections opened, the most open at once, and tracker
+  errors. An `--isolated` run shows no peer and a P2P share of 0; it still
+  announces to trackers, so tracker errors can count;
+- `playlist`: playlist reloads that changed, did not change, and failed.
+
 The run stops with exit code 1 on an error: among others, when the core does
 not load the stream's segments at the start (no WebRTC, P2P off, or a stream
 it cannot share), when a segment fails after 6 retries, and when the playhead
