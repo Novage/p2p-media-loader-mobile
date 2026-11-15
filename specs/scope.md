@@ -25,6 +25,8 @@ segment identity and peer messages are those of the web project; see
 | Android  | Phones, tablets | Maven Central                              |
 | iOS      | iPhones, iPads  | Swift Package Manager, with an XCFramework |
 
+On Android, the library runs on Android 7.0 (API level 24) and later.
+
 Android TV, tvOS, desktop platforms and the web are outside the scope. The web
 has P2P Media Loader itself.
 

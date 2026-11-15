@@ -1,9 +1,9 @@
 # P2P Media Loader Mobile
 
 P2P delivery of HLS and DASH for Media3 on Android and of HLS for AVPlayer on
-iOS, and for other players through a local HTTP server. Mobile viewers share segments with each other and with the
-web viewers of [P2P Media Loader](https://github.com/Novage/p2p-media-loader),
-in one swarm.
+iOS, and for other players through a local HTTP server. Mobile viewers share
+segments with each other and with the web viewers of
+[P2P Media Loader](https://github.com/Novage/p2p-media-loader), in one swarm.
 
 This branch holds the next major version. It is in development and is not
 published. The current version, an Android library, is on the
@@ -13,6 +13,34 @@ published. The current version, an Android library, is on the
   P2P.
 - [Specs](specs/README.md): the design.
 - [AGENTS.md](AGENTS.md): how to work in this repository.
+
+## Build
+
+You need the Android SDK and JDK 17 or later. `./gradlew` uses the JDK that
+`JAVA_HOME` or `PATH` names; to use Android Studio's own, on a Mac:
+`export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`.
+Set the SDK's path in `ANDROID_HOME` or in `local.properties` (`sdk.dir=…`), or
+open the project in Android Studio, which writes `local.properties`.
+
+| Gradle module     | What it is                                              |
+| ----------------- | ------------------------------------------------------- |
+| `library`         | The Kotlin Multiplatform library                        |
+| `samples/android` | A sample app that plays the BBB live stream with Media3 |
+
+`tools/node-peer` is a Node tool, not a Gradle module: it runs the web core as
+a peer; see its README.
+
+```bash
+./gradlew build
+```
+
+```bash
+./gradlew :samples:android:installDebug
+```
+
+`build` compiles both modules, runs the library's tests and runs lint on both
+modules. The second command installs the sample on a connected device or a
+running emulator.
 
 ## License
 
