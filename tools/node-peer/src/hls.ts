@@ -22,10 +22,79 @@ export const fetchPlaylist = async (url: string): Promise<Playlist> => {
   };
 };
 
-/** The absolute URLs of a media playlist's segments, in playlist order. */
-export const segmentUrls = (text: string, playlistUrl: string): string[] =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("#"))
-    .map((line) => new URL(line, playlistUrl).href);
+export type MediaSegment = {
+  /** Absolute URL. */
+  url: string;
+  /** Seconds, from `EXTINF`. */
+  duration: number;
+  /** Media sequence number. */
+  sequence: number;
+  /** Absolute URL of the `EXT-X-MAP` in effect for the segment, if any. */
+  initUrl?: string;
+};
+
+export type MediaPlaylist = {
+  /** `EXT-X-TARGETDURATION`: the longest segment, and the refresh interval. */
+  targetDuration: number;
+  /** `EXT-X-MEDIA-SEQUENCE`: the sequence number of the first segment. */
+  mediaSequence: number;
+  /** `EXT-X-ENDLIST`: no segment will be added. */
+  endList: boolean;
+  segments: MediaSegment[];
+};
+
+/**
+ * The tags of a media playlist a player needs to play it. Byte ranges, keys
+ * and LL-HLS parts are outside the scope; their tags are skipped.
+ */
+export const parseMediaPlaylist = (
+  text: string,
+  playlistUrl: string,
+): MediaPlaylist => {
+  const playlist: MediaPlaylist = {
+    targetDuration: 0,
+    mediaSequence: 0,
+    endList: false,
+    segments: [],
+  };
+  const resolve = (uri: string) => new URL(uri, playlistUrl).href;
+  let duration = 0;
+  let initUrl: string | undefined;
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    if (!line.startsWith("#")) {
+      playlist.segments.push({
+        url: resolve(line),
+        duration,
+        sequence: playlist.mediaSequence + playlist.segments.length,
+        initUrl,
+      });
+      continue;
+    }
+    const colon = line.indexOf(":");
+    const tag = colon === -1 ? line : line.slice(0, colon);
+    const value = line.slice(colon + 1);
+    switch (tag) {
+      case "#EXTINF":
+        duration = Number(value.split(",")[0]);
+        break;
+      case "#EXT-X-TARGETDURATION":
+        playlist.targetDuration = Number(value);
+        break;
+      case "#EXT-X-MEDIA-SEQUENCE":
+        playlist.mediaSequence = Number(value);
+        break;
+      case "#EXT-X-ENDLIST":
+        playlist.endList = true;
+        break;
+      case "#EXT-X-MAP": {
+        const uri = /URI="([^"]*)"/.exec(value)?.[1];
+        initUrl = uri === undefined ? undefined : resolve(uri);
+        break;
+      }
+    }
+  }
+  return playlist;
+};

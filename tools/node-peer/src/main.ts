@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { fetchPlaylist, segmentUrls } from "./hls.ts";
+import { fetchPlaylist, parseMediaPlaylist } from "./hls.ts";
 import { loadCore } from "./load-core.ts";
 
 const streamUrl =
@@ -38,7 +38,7 @@ try {
     );
   }
 
-  const newest = segmentUrls(media.data, media.url).at(-1);
+  const newest = parseMediaPlaylist(media.data, media.url).segments.at(-1)?.url;
   if (!newest) throw new Error(`${media.url}: no segments`);
   const loadable = core.isSegmentLoadable(newest);
   console.log(`${main.streamId}, newest segment ${newest}`);
