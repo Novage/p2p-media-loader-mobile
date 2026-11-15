@@ -44,7 +44,7 @@ const { version } = JSON.parse(
 
 // After the browser globals, which load-core.ts sets when it is imported, so
 // that the core's reads of them are recorded too.
-// The file name: a call site shows the path behind pnpm's symlink.
+// The file name: a call site can show the path behind a symlink.
 const bundleFile = basename(BUNDLE.pathname);
 const recorder = values["record-globals"]
   ? recordGlobals((script) => script.endsWith(bundleFile))

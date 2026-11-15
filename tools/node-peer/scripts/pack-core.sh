@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Builds p2p-media-loader-core in a checkout of the web repo and packs it into
-# .core/, to try a core that is not released: `pnpm add` it from there (see the
-# README). The tarball holds the published entry points (lib/*.js), not the
-# sources the web repo develops against.
+# .core/, to try a core that is not released: `npm install` it from there (see
+# the README). The web repo builds with pnpm, so this script runs pnpm there.
+# The tarball holds the published entry points (lib/*.js), not the sources the
+# web repo develops against.
 #
 # Usage: scripts/pack-core.sh [path to the web repo]
 # The path defaults to $P2PML_WEB, then to p2p-media-loader next to this repo.

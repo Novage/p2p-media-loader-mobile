@@ -1,4 +1,0 @@
-# pnpm waits a day before it installs a new release. The core is this
-# project's own package, and a new release of it is wanted at once.
-minimumReleaseAgeExclude:
-  - p2p-media-loader-core

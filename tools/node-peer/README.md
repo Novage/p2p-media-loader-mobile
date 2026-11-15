@@ -10,17 +10,17 @@ libdatachannel? Later it is a headless peer for tests with mixed swarms.
 
 ## Setup
 
-Node 24 or later, and pnpm.
+Node 24 or later, with npm.
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm start
+npm ci
+npm start
 ```
 
-`pnpm start` runs `src/main.ts` directly; Node strips the types. Check the
-types with `pnpm type-check`.
+`npm start` runs `src/main.ts` directly; Node strips the types. Check the
+types with `npm run type-check`.
 
-`pnpm start [stream URL] [--minutes N] [--isolated | --swarm ID]` plays a
+`npm start -- [stream URL] [--minutes N] [--isolated | --swarm ID]` plays a
 live stream through the core, the way HLS.js with the P2P Media Loader adapter
 plays it in a browser, for N minutes (default 2). The default stream is
 `https://live.novage.workers.dev/bbb/live.m3u8`. The swarm:
@@ -107,7 +107,7 @@ It is where a shim list starts, not all of it:
 - the core takes Node's branches: a check it skips in Node, such as for a
   prefixed `webkitRTCPeerConnection`, is not recorded.
 
-`pnpm test` checks the playlist reader, the playback model, the record of
+`npm test` checks the playlist reader, the playback model, the record of
 globals, and that the WebRTC the tool gives the core works the way the core
 uses it.
 
@@ -123,32 +123,29 @@ WebRTC from `node-datachannel`, and `window`, which is the global object as in
 a browser, because the core reads its APIs from `window`. Node runs without
 Web Storage (`--no-experimental-webstorage`), so the core's logger finds no
 `localStorage`, as in a browser that blocks it. The logger reads
-`process.env.DEBUG` then: `DEBUG='p2pml-core:*' pnpm start` shows the core's
+`process.env.DEBUG` then: `DEBUG='p2pml-core:*' npm start` shows the core's
 logs.
 
 ## The core
 
 The core is the published npm package, at the exact version in
 `package.json`; the lockfile pins it. To use another release:
-`pnpm add -E p2p-media-loader-core@<version>`.
+`npm install -E p2p-media-loader-core@<version>`.
 
 To try a core that is not released, from a checkout of
 [P2P Media Loader](https://github.com/Novage/p2p-media-loader) (by default
 `../p2p-media-loader` next to this repository):
 
 ```bash
-pnpm pack-core
-pnpm add ./.core/p2p-media-loader-core.tgz
+npm run pack-core
+npm install ./.core/p2p-media-loader-core.tgz
 ```
 
-`pnpm pack-core` installs the checkout's dependencies from its lockfile,
+`npm run pack-core` installs the checkout's dependencies from its lockfile,
 builds the core, and packs it into `.core/` as `pnpm publish` packs it. It
 refuses a checkout with uncommitted changes, and writes the branch and the
-commit it packed to `.core/SOURCE`. Another checkout: `pnpm pack-core <path>`,
+commit it packed to `.core/SOURCE`. Another checkout: `npm run pack-core -- <path>`,
 or set `P2PML_WEB`. A run prints only the core's version, so the commit of a
 packed core is in `pack-core`'s output and in `.core/SOURCE`. Go back to a
-release with `pnpm add -E` as above; a packed core is for a trial, not for a
+release with `npm install -E` as above; a packed core is for a trial, not for a
 commit.
-
-`pnpm-workspace.yaml` lets pnpm install a release of the core at once; pnpm
-waits a day before it installs other new releases.

@@ -73,9 +73,9 @@ its own, tested with web peers in the same swarm.
 - **Temporary edits are always removed** before a change is reported done.
 - **Verify before reporting done:** `./gradlew build` (it compiles both
   modules, runs the library's tests and lint on both), with `JAVA_HOME` set
-  as the README says; `pnpm test` and `pnpm type-check` in `tools/node-peer`
+  as the README says; `npm test` and `npm run type-check` in `tools/node-peer`
   for a change there; and prettier on the changed files, with the version
-  `tools/node-peer` pins (after `pnpm install --frozen-lockfile` there):
+  `tools/node-peer` pins (after `npm ci` there):
   `tools/node-peer/node_modules/.bin/prettier --check --ignore-unknown <files>`.
 - **Known issues go in [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md)**: an issue found
   and not fixed gets an entry; a fix removes its entry.
