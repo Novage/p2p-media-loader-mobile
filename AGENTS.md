@@ -78,9 +78,10 @@ its own, tested with web peers in the same swarm.
 
 ## Things that are deliberate, not oversights
 
-- **Only relative URLs get P2P.** Media playlists and segments that a master
-  playlist names with relative or root-relative URLs reach the core. A stream
-  that names them with absolute URLs plays without P2P. See
+- **The local server gives P2P to relative URLs only.** Through the server, a
+  resource that a manifest names with a relative or root-relative URL reaches
+  the core; one named with an absolute URL plays without P2P, and the library
+  does not rewrite manifests. A data source sees every URL. See
   [`specs/scope.md`](specs/scope.md).
 - **A request the core does not recognise goes to the network.** This is
   normal operation, not an error path. A disagreement between the core's parse
