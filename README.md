@@ -31,6 +31,10 @@ open the project in Android Studio, which writes `local.properties`.
 a peer; see its README.
 
 ```bash
+./gradlew spotlessApply
+```
+
+```bash
 ./gradlew build
 ```
 
@@ -38,8 +42,10 @@ a peer; see its README.
 ./gradlew :samples:android:installDebug
 ```
 
-`build` compiles both modules, runs the library's tests and runs lint on both
-modules. The second command installs the sample on a connected device or a
+`spotlessApply` formats the Kotlin and Gradle files with ktfmt, and fixes
+trailing whitespace and final newlines in the other build files. `build`
+compiles both modules, runs the library's tests, and fails on a warning from
+the compiler, Android lint, detekt (with type resolution) or the format check. The last command installs the sample on a connected device or a
 running emulator.
 
 ## License

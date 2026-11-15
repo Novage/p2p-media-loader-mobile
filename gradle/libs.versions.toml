@@ -5,6 +5,10 @@ android-targetSdk = "36"
 agp = "9.5.1"
 kotlin = "2.4.21"
 media3 = "1.11.1"
+spotless = "8.9.0"
+ktfmt = "0.64"
+# The first detekt built on the Kotlin 2.4 compiler, which type resolution needs.
+detekt = "2.0.0-alpha.6"
 
 [libraries]
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
@@ -16,3 +20,5 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 android-lint = { id = "com.android.lint", version.ref = "agp" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }

@@ -71,12 +71,18 @@ its own, tested with web peers in the same swarm.
   baseline. For a baseline, use a worktree of the base commit in a scratch
   folder.
 - **Temporary edits are always removed** before a change is reported done.
-- **Verify before reporting done:** `./gradlew build` (it compiles both
-  modules, runs the library's tests and lint on both), with `JAVA_HOME` set
-  as the README says; `npm test` and `npm run type-check` in `tools/node-peer`
-  for a change there; and prettier on the changed files, with the version
-  `tools/node-peer` pins (after `npm ci` there):
-  `tools/node-peer/node_modules/.bin/prettier --check --ignore-unknown <files>`.
+- **Verify before reporting done:**
+  - `./gradlew spotlessApply`, then `./gradlew build`, with `JAVA_HOME` set
+    as the README says. The build fails on a warning from the Kotlin
+    compiler, Android lint, detekt (with type resolution), and on a ktfmt or
+    whitespace finding; Gradle deprecations do not fail it yet (see
+    KNOWN-ISSUES.md). Fix a finding; suppress one only where the code is
+    deliberate, with the reason next to it.
+  - For a change in `tools/node-peer`: `npm test` and `npm run type-check`
+    there.
+  - Prettier on the changed files, with the version `tools/node-peer` pins
+    (after `npm ci` there):
+    `tools/node-peer/node_modules/.bin/prettier --check --ignore-unknown <files>`.
 - **Known issues go in [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md)**: an issue found
   and not fixed gets an entry; a fix removes its entry.
 - Match the surrounding code's style, comment density and naming. Comments
