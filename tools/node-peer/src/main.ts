@@ -31,11 +31,16 @@ const swarmId = values.isolated
   ? `node-peer-${randomUUID()}`
   : values.swarm || undefined;
 
-const source = readFileSync(
-  new URL("../.core/SOURCE", import.meta.url),
-  "utf8",
-);
-console.log(source.trimEnd());
+// By path: the package's exports do not name its package.json.
+const { version } = JSON.parse(
+  readFileSync(
+    new URL(
+      "../node_modules/p2p-media-loader-core/package.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as { version: string };
 
 // After the browser globals, which load-core.ts sets when it is imported, so
 // that the core's reads of them are recorded too.
@@ -46,7 +51,9 @@ const recorder = values["record-globals"]
   : undefined;
 const api = await loadCore();
 recorder?.loaded();
-console.log(`core loaded, peer protocol: ${api.PEER_PROTOCOL_VERSION}`);
+console.log(
+  `core ${version} loaded, peer protocol: ${api.PEER_PROTOCOL_VERSION}`,
+);
 
 const core = new api.Core({
   manifestParsers: [api.hlsManifestParser],

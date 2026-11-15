@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "node-datachannel": "^0.33.6",
-    "p2p-media-loader-core": "file:.core/p2p-media-loader-core.tgz"
+    "p2p-media-loader-core": "5.0.0-alpha.7"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -10,12 +10,9 @@ libdatachannel? Later it is a headless peer for tests with mixed swarms.
 
 ## Setup
 
-Node 24 or later, and pnpm. The core comes from a checkout of
-[P2P Media Loader](https://github.com/Novage/p2p-media-loader), by default
-`../p2p-media-loader` next to this repository, on the branch to test.
+Node 24 or later, and pnpm.
 
 ```bash
-pnpm pack-core
 pnpm install --frozen-lockfile
 pnpm start
 ```
@@ -129,14 +126,27 @@ logs.
 
 ## The core
 
-`pnpm pack-core` installs the web checkout's dependencies from its lockfile,
-builds the core, and packs it into `.core/`, as `pnpm publish` packs it. It
-refuses a checkout with uncommitted changes, and it writes the branch and the
-commit it packed to `.core/SOURCE`. Another checkout: `pnpm pack-core <path>`,
-or set `P2PML_WEB`.
+The core is the published npm package, at the exact version in
+`package.json`; the lockfile pins it. To use another release:
+`pnpm add -E p2p-media-loader-core@<version>`.
 
-The same commit gives the same tarball, so the integrity hash in
-`pnpm-lock.yaml` pins the core: `pnpm install --frozen-lockfile` stops when
-the packed core is not the one the lockfile names. To use another core: check
-out the branch or commit in the web repo, then run `pnpm pack-core` and
-`pnpm install`, and commit the changed lockfile.
+To try a core that is not released, from a checkout of
+[P2P Media Loader](https://github.com/Novage/p2p-media-loader) (by default
+`../p2p-media-loader` next to this repository):
+
+```bash
+pnpm pack-core
+pnpm add ./.core/p2p-media-loader-core.tgz
+```
+
+`pnpm pack-core` installs the checkout's dependencies from its lockfile,
+builds the core, and packs it into `.core/` as `pnpm publish` packs it. It
+refuses a checkout with uncommitted changes, and writes the branch and the
+commit it packed to `.core/SOURCE`. Another checkout: `pnpm pack-core <path>`,
+or set `P2PML_WEB`. A run prints only the core's version, so the commit of a
+packed core is in `pack-core`'s output and in `.core/SOURCE`. Go back to a
+release with `pnpm add -E` as above; a packed core is for a trial, not for a
+commit.
+
+`pnpm-workspace.yaml` lets pnpm install a release of the core at once; pnpm
+waits a day before it installs other new releases.
