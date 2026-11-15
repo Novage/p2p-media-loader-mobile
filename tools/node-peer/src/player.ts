@@ -143,18 +143,24 @@ export class PlaybackModel {
    * is full, or when the playlist does not list the next segment yet.
    */
   nextSegment(segments: readonly TimedSegment[]): TimedSegment | undefined {
-    const bufferAhead = this.#bufferAhead();
-    if (bufferAhead >= this.#maxBuffer) return undefined;
-    const bufferEnd = this.#playhead + bufferAhead;
+    const bufferEnd = this.#bufferEnd();
+    if (bufferEnd - this.#playhead >= this.#maxBuffer) return undefined;
+    // The range's own end, not the playhead plus the buffer ahead: that sum
+    // can round to less than the end of the segment just buffered.
     return segments.find((segment) => segment.end > bufferEnd);
   }
 
   // The rule of the core's getBufferAhead.
   #bufferAhead() {
+    return this.#bufferEnd() - this.#playhead;
+  }
+
+  /** The end of the range that holds the playhead; the playhead in a gap. */
+  #bufferEnd() {
     const playhead = this.#playhead;
     const range = this.#ranges.find(
       ({ start, end }) => start <= playhead && playhead <= end,
     );
-    return range ? range.end - playhead : 0;
+    return range ? range.end : playhead;
   }
 }

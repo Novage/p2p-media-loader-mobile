@@ -1,9 +1,22 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { fetchPlaylist, parseMediaPlaylist } from "./hls.ts";
+import { parseArgs } from "node:util";
+import { cleanup } from "node-datachannel";
+import { play } from "./headless-player.ts";
 import { loadCore } from "./load-core.ts";
 
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    minutes: { type: "string", default: "2" },
+    // A swarm of its own, which no web peer joins: the core over HTTP alone.
+    isolated: { type: "boolean", default: false },
+  },
+});
 const streamUrl =
-  process.argv[2] ?? "https://live.novage.workers.dev/bbb/live.m3u8";
+  positionals[0] ?? "https://live.novage.workers.dev/bbb/live.m3u8";
+const minutes = Number(values.minutes);
+if (!(minutes > 0)) throw new Error("--minutes must be a positive number");
 
 const source = readFileSync(
   new URL("../.core/SOURCE", import.meta.url),
@@ -11,39 +24,28 @@ const source = readFileSync(
 );
 console.log(source.trimEnd());
 
-const { Core, PEER_PROTOCOL_VERSION, hlsManifestParser } = await loadCore();
-console.log(`core loaded, peer protocol: ${PEER_PROTOCOL_VERSION}`);
+const api = await loadCore();
+console.log(`core loaded, peer protocol: ${api.PEER_PROTOCOL_VERSION}`);
 
-const core = new Core({ manifestParsers: [hlsManifestParser] });
+const core = new api.Core({
+  manifestParsers: [api.hlsManifestParser],
+  swarmId: values.isolated ? `node-peer-${randomUUID()}` : undefined,
+});
 try {
-  const master = await fetchPlaylist(streamUrl);
-  core.processManifest(master);
-
-  // The highest bitrate: where web viewers on a good connection play.
-  const [main] = core
-    .getStreams()
-    .filter((stream) => stream.type === "main")
-    .sort((a, b) => (b.properties.bitrate ?? 0) - (a.properties.bitrate ?? 0));
-  if (!main) throw new Error(`${streamUrl}: no main stream`);
-
-  const media = await fetchPlaylist(main.runtimeId);
-  core.processManifest(media);
-
-  // Listed after the media playlist: one the core did not match to the
-  // master's stream shows as a stream of its own.
-  for (const stream of core.getStreams()) {
-    const { bitrate, height } = stream.properties;
-    console.log(
-      `${stream.streamId}: ${bitrate} bit/s, ${height}p, infohash ${stream.infoHash}`,
-    );
-  }
-
-  const newest = parseMediaPlaylist(media.data, media.url).segments.at(-1)?.url;
-  if (!newest) throw new Error(`${media.url}: no segments`);
-  const loadable = core.isSegmentLoadable(newest);
-  console.log(`${main.streamId}, newest segment ${newest}`);
-  console.log(`loadable: ${loadable}`);
-  if (!loadable) process.exitCode = 1;
+  await play({
+    core,
+    liveDelayFor: api.liveDelayFor,
+    playerBufferFor: api.playerBufferFor,
+    streamUrl,
+    seconds: minutes * 60,
+    log: console.log,
+  });
+} catch (error) {
+  console.error(error);
+  process.exitCode = 1;
 } finally {
   core.destroy();
+  // Peer connections run on libdatachannel's threads, which keep Node
+  // running until they are stopped.
+  cleanup();
 }

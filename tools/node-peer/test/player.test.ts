@@ -64,6 +64,19 @@ test("playback starts at the first buffered playhead, not before", () => {
   assert.equal(model.stalls, 0);
 });
 
+test("the next request is after the segment just buffered, whatever the rounding", () => {
+  // 2.002 s segments, as at 29.97 fps. With the playhead half a second before
+  // the end of the second segment, playhead + (end - playhead) rounds to less
+  // than the end of the tenth.
+  const segments = new Timeline().update(live(0, Array(12).fill(2.002)));
+  const position = segments[1].end - 0.5;
+  const model = new PlaybackModel({ position, maxBuffer: 60 });
+  for (const segment of segments.slice(1, 10)) {
+    model.append(segment.start, segment.end);
+  }
+  assert.equal(model.nextSegment(segments)?.sequence, 10);
+});
+
 test("a buffer exactly at maxBuffer requests nothing", () => {
   const segments = new Timeline().update(live(0, [6, 6, 6]));
   const model = new PlaybackModel({ position: 0, maxBuffer: 12 });

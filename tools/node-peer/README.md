@@ -23,18 +23,33 @@ pnpm start
 `pnpm start` runs `src/main.ts` directly; Node strips the types. Check the
 types with `pnpm type-check`.
 
-`pnpm start [stream URL]` gives the core the stream's master playlist and the
-media playlist of its highest bitrate, where web viewers on a good connection
-play. The default stream is `https://live.novage.workers.dev/bbb/live.m3u8`.
-It prints each stream the core registered, with the infohash it announces to
-trackers, so it can be compared with a web peer's swarm on the same stream.
-Then it asks the core whether the newest segment is loadable. The answer is
-`false`, and the exit code 1, when the core saw no WebRTC at load, when the
-segment is not in its registry, or when it did not match the media playlist
-to the master's stream.
+`pnpm start [stream URL] [--minutes N] [--isolated]` plays a live stream
+through the core, the way HLS.js with the P2P Media Loader adapter plays it in
+a browser, for N minutes (default 2). The default stream is
+`https://live.novage.workers.dev/bbb/live.m3u8`. `--isolated` puts the core
+in a swarm of its own, which no web peer joins.
 
-`pnpm test` checks that the WebRTC the tool gives the core works the way the
-core uses it.
+The player plays one quality, the highest bitrate, where web viewers on a
+good connection play. It starts at the core's live delay, buffers up to the
+core's buffer cap, requests one segment at a time, and reports its playback
+to the core every 250 ms and before each request. It reloads the playlist and
+retries a failed segment on HLS.js's schedule. It prints:
+
+- each stream the core registered, with the infohash it announces to
+  trackers, to compare with a web peer's swarm on the same stream;
+- the placement: the live delay and the buffer cap;
+- a line per segment: its sequence number; `core` when it came through the
+  core, `direct` when `isSegmentLoadable` was false and the player loaded it
+  itself; its size and load time; the buffer ahead and the stalls so far; and
+  the bytes the core downloaded so far over HTTP and from peers.
+
+The run stops with exit code 1 on an error: among others, when the core does
+not load the stream's segments at the start (no WebRTC, P2P off, or a stream
+it cannot share), when a segment fails after 6 retries, and when the playhead
+leaves the live window.
+
+`pnpm test` checks the playlist reader, the playback model, and that the
+WebRTC the tool gives the core works the way the core uses it.
 
 ## How the core runs
 
