@@ -5,7 +5,7 @@ import "./browser-globals.ts";
 // The core and its HLS parser in one file with no imports: what a mobile JS
 // engine loads, with no package resolution. The package's exports do not name
 // it, so it is loaded by its path.
-const BUNDLE = new URL(
+export const BUNDLE = new URL(
   "../node_modules/p2p-media-loader-core/dist/p2p-media-loader-core-hls.es.js",
   import.meta.url,
 );

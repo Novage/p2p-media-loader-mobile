@@ -75,8 +75,28 @@ not load the stream's segments at the start (no WebRTC, P2P off, or a stream
 it cannot share), when a segment fails after 6 retries, and when the playhead
 leaves the live window.
 
-`pnpm test` checks the playlist reader, the playback model, and that the
-WebRTC the tool gives the core works the way the core uses it.
+`--record-globals` lists, at the end, the host globals the core read: the
+globals beyond ECMA-262 that a JS engine without browser APIs must give it,
+`window` and `console` among them. For `navigator`, `performance`, `console`,
+`process`, `crypto` and `localStorage` it also lists the members read. Each
+entry says whether the core first read it while its bundle loaded (`load`) or
+later (`run`). A browser global that Node lacks is recorded too, when the core
+tests for it. Only reads the core makes itself count, so a run with peers
+covers more of it than an `--isolated` one.
+
+It is where a shim list starts, not all of it:
+
+- the members of instances are not recorded: what a `Response` from `fetch`
+  must have (`body.getReader()`, so a `ReadableStream`), or a `WebSocket`, an
+  `RTCPeerConnection` and an `AbortSignal`;
+- some entries are only probes: a `typeof` check of an API the core can do
+  without, such as `document` and `process` for the logger;
+- the core takes Node's branches: a check it skips in Node, such as for a
+  prefixed `webkitRTCPeerConnection`, is not recorded.
+
+`pnpm test` checks the playlist reader, the playback model, the record of
+globals, and that the WebRTC the tool gives the core works the way the core
+uses it.
 
 ## How the core runs
 

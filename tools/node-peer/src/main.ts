@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { parseArgs } from "node:util";
 import { cleanup } from "node-datachannel";
 import { formatSummary, play } from "./headless-player.ts";
-import { loadCore } from "./load-core.ts";
+import { BUNDLE, loadCore } from "./load-core.ts";
+import { recordGlobals } from "./record-globals.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -13,6 +15,8 @@ const { values, positionals } = parseArgs({
     isolated: { type: "boolean", default: false },
     // A test swarm the web peers under test join with the demo's ?swarmId=.
     swarm: { type: "string" },
+    // Lists the host globals the core reads: what an engine must give it.
+    "record-globals": { type: "boolean", default: false },
   },
 });
 const streamUrl =
@@ -33,7 +37,15 @@ const source = readFileSync(
 );
 console.log(source.trimEnd());
 
+// After the browser globals, which load-core.ts sets when it is imported, so
+// that the core's reads of them are recorded too.
+// The file name: a call site shows the path behind pnpm's symlink.
+const bundleFile = basename(BUNDLE.pathname);
+const recorder = values["record-globals"]
+  ? recordGlobals((script) => script.endsWith(bundleFile))
+  : undefined;
 const api = await loadCore();
+recorder?.loaded();
 console.log(`core loaded, peer protocol: ${api.PEER_PROTOCOL_VERSION}`);
 
 const core = new api.Core({
@@ -56,6 +68,13 @@ try {
   process.exitCode = 1;
 } finally {
   core.destroy();
+  if (recorder) {
+    const lines = recorder.report().map((read) => {
+      const members = read.members.map((m) => `${m.name} (${m.phase})`);
+      return `${read.name} (${read.phase})${members.length ? `: ${members.join(", ")}` : ""}`;
+    });
+    console.log(["globals the core read", ...lines].join("\n  "));
+  }
   // Peer connections run on libdatachannel's threads, which keep Node
   // running until they are stopped.
   cleanup();
