@@ -17,19 +17,21 @@ detail, and stay matched with every web release.
 
 The library runs the web core, unchanged, in a JS engine embedded in the app:
 
-| Platform | Engine         |
-| -------- | -------------- |
-| iOS      | JavaScriptCore |
-| Android  | QuickJS        |
+| Platform | Engine  |
+| -------- | ------- |
+| Android  | QuickJS |
+| iOS      | QuickJS |
+
+One engine on both platforms shares the binding and the native shims. The
+system's JavaScriptCore on iOS would save the engine's code size there, and
+possibly memory; it is the proposal
+[javascriptcore-on-ios.md](javascriptcore-on-ios.md).
 
 The engine runs the bundle the web core ships, the core and its HLS parser in
 one file with no imports (`dist/p2p-media-loader-core-hls.es.js`). The library
 does not bundle the core itself, so a phone runs the same published build of
-the core as the web. The bundle is an ES module. QuickJS loads ES modules.
-Whether JavaScriptCore can load one through a public API in an iOS app is to
-be confirmed in the iOS step; if it cannot, an IIFE build of the core, as the
-web integration packages already have, is the alternative. The package's
-`lib/` entry is for bundlers, not for engines.
+the core as the web. The bundle is an ES module, which QuickJS loads as it is.
+The package's `lib/` entry is for bundlers, not for engines.
 
 ### What the engine must give the core
 
@@ -103,6 +105,95 @@ the API implementations above would change.
   and its CPU cost, but it must match the web core in every rule above, and
   any difference splits the swarm without an error.
 
+### Choices before the Android step
+
+Two building blocks were chosen before the Android step: the binding between
+Kotlin and QuickJS, for both platforms, and the WebRTC library. The facts come from each project's
+repository, releases and sources on 2026-11-15, and from two spikes on a Mac.
+
+**The QuickJS binding: our own, a thin C layer over Bellard's QuickJS, pinned
+to its 2026-06-04 release, with JNI on Android and Kotlin/Native cinterop on
+iOS.** The core is a long-lived library driven by native events: network
+callbacks, data channel messages and timers arrive on other threads and must
+call into JS on the engine's one thread, often with segment bytes.
+
+| Candidate                                                                                                                           | Facts for the decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [quickjs-kt](https://github.com/dokar3/quickjs-kt)                                                                                  | Active (v1.0.18, 2026-11-07), Apache-2.0, with Bellard's QuickJS. Kotlin cannot keep a JS function from it (a function property converts to the string `"[Function]"`, a function value to an empty object), and its async host functions work only inside one pending `evaluate()`, so every event would need a polling pump. Bytes are always copied, a JS view's `byteOffset` and `byteLength` are ignored, and a `ByteArray` passed to JS is not released (from its JNI sources). Its experimental `withNativeContext` gives the app's own C code the raw engine, but then the host would be our own C code anyway. |
+| [Zipline](https://github.com/cashapp/zipline)                                                                                       | No host functions for plain JS (only its JSON-bridged Kotlin interfaces), no ES modules, no run of Promise jobs, and QuickJS from 2021.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Others ([quickjs-wrapper](https://github.com/HarlonWang/quickjs-wrapper), [quickjs-kmp](https://github.com/HarlonWang/quickjs-kmp)) | quickjs-wrapper is Android and JVM only, with an engine from 2024; quickjs-kmp is from 2026-09 (release 0.1.4). Both copy bytes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Our own over a QuickJS C API**                                                                                                    | The C API has what the host needs: ES modules (`JS_EVAL_TYPE_MODULE`), Promise capabilities and a job loop the host runs (`JS_ExecutePendingJob`), JS functions kept as values, and typed arrays that wrap native memory with no copy (`JS_NewArrayBuffer`, `JS_NewUint8Array`, `JS_GetTypedArrayBuffer`). With no copy only on a native path, such as libdatachannel to QuickJS in C: bytes from Kotlin cross JNI with a copy, unless they come in a direct `ByteBuffer`. The cost: the binding owns reference counts and threading, where a mistake crashes the app; it needs tests under AddressSanitizer.           |
+
+Two QuickJS projects have that API:
+
+| Engine                                                            | Facts for the decision                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Bellard's QuickJS](https://bellard.org/quickjs/)**, 2026-06-04 | About 25% faster than quickjs-ng at the text and regular expression work the core does (measured below). Tagged releases are rarer (2025-04-26, 2025-09-13, 2026-06-04), but the repository is active (at least 50 commits since 2026-08). MIT. About 0.75 MB on Android arm64 (a local stripped build of the 2026-06-04 release). It has no `btoa`, `atob` or `navigator`, which the library gives as for any engine; the core does not need `queueMicrotask`. |
+| [quickjs-ng](https://github.com/quickjs-ng/quickjs) 0.18          | A release about every two months, test262 on each change, several maintainers. MIT. About 0.8 MB on Android arm64. More browser globals built in. Its no-copy constructors differ: `JS_NewArrayBuffer` and `JS_NewUint8Array` take a maximum length and a realloc callback (size 0 frees), where Bellard's take a free callback; it adds `JS_GetUint8Array`.                                                                                                    |
+
+The rest of the API the binding uses is the same in both (module evaluation,
+the job loop, Promise capabilities, `JS_NewCFunctionData`,
+`JS_GetTypedArrayBuffer`). The binding builds its no-copy arrays in one
+adapter function, so quickjs-ng stays a fallback at little cost. Both embed
+the same libregexp, libunicode and dtoa. libregexp follows ES2023, which
+covers the core: its regular expressions use only the `g` and `i` flags.
+
+A JVM build of the JNI library runs the host's unit tests on a Mac.
+
+**The WebRTC library: libdatachannel, built from source with the NDK,
+data channels only, with Mbed TLS.**
+
+| Candidate                                                                 | arm64 `.so`                                                                                | Notes                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **libdatachannel, own build** (`NO_MEDIA`, `NO_WEBSOCKET`, `USE_MBEDTLS`) | 3.8 MB stripped, as stored in the app (1.4 MB as a download), from a default Release build | Built with NDK 28 in about 20 s on a Mac, as the build script timed it; aligned to 16 KB pages, as Google Play requires for apps that target API 35; needs only Android system libraries. Its C API (`rtc.h`) is the same for a later cinterop binding on iOS. Android is a named target, but its CI does not test Android. MPL-2.0. |
+| libdatachannel-java-android (`tel.schich`)                                | 8.7 MB stripped                                                                            | Includes media and OpenSSL, libdatachannel 0.24.1, and is aligned to 4 KB pages, which Google Play will not accept for updates from February 2027.                                                                                                                                                                                   |
+| libwebrtc, `io.github.webrtc-sdk:android-prefixed-stripped`               | 7.7 MB                                                                                     | Chrome's own SCTP stack, but twice the size, and no `bufferedAmountLowThreshold` (only a change callback).                                                                                                                                                                                                                           |
+
+Mbed TLS must be built with `MBEDTLS_SSL_DTLS_SRTP` for libdatachannel to
+compile, even without media. What the binding must add to match a browser: a
+`closing` state (libdatachannel has none) and the calls from library threads
+posted to the engine thread. `bufferedAmount` leaves out up to the SCTP send
+buffer (1 MiB by default, settable with `rtcSetSctpSettings`).
+
+**Licences.** The obligations pass to every app that ships the library:
+libdatachannel and libjuice are MPL-2.0, a copyleft for each file, so an app
+must say where the source of those files is, our changes included; usrsctp is
+BSD-3-Clause and Mbed TLS Apache-2.0 (or GPL-2.0-or-later; the library takes
+Apache-2.0), and both need their notices; QuickJS is MIT; this repository
+is Apache-2.0.
+
+**Risks.** libdatachannel has one main maintainer, and its usrsctp comes from
+that maintainer's fork. The build pins Mbed TLS 3.6, a long-term support line;
+the move to Mbed TLS 4 must be checked, though libdatachannel already has code
+for both. Shipping Mbed TLS for DTLS means an app answers the stores'
+encryption export questions: the App Store asks about encryption not provided
+by iOS, and US export rules (EAR 740.17) cover standard cryptography in mass
+market software.
+
+### The speed of QuickJS, measured
+
+On the Mac, against V8 with its compilers and its regular expression compiler
+off (`--no-opt --no-maglev --no-sparkplug --regexp-interpret-all`), and
+against JavaScriptCore without its JIT (`jsc --useJIT=false`), in several runs
+each. Bellard's QuickJS is its 2026-06-04 release tarball:
+
+| Benchmark                        | Bellard's QuickJS | quickjs-ng 0.18 | V8, interpreted | JavaScriptCore, no JIT |
+| -------------------------------- | ----------------- | --------------- | --------------- | ---------------------- |
+| Arithmetic loop                  | 543–585 ms        | 598–621 ms      | 365–369 ms      | 967–1107 ms            |
+| Playlist-like text parsing       | 182–206 ms        | 250–262 ms      | 117–121 ms      | 110–125 ms             |
+| HLS attribute regular expression | 371–373 ms        | 475–487 ms      | 434–453 ms      | 288–297 ms             |
+| Cut and join segment bytes       | 8–9 ms            | 9–11 ms         | 11–26 ms        | 11–17 ms               |
+
+So Bellard's QuickJS is about 1.5 to 1.7 times slower than V8's interpreter
+for the core's logic and a little faster for regular expressions; quickjs-ng
+is 1.6 to 2.2 times slower and about the same. Byte copies are short native
+calls in all of them, and their runs are too short for a stable factor. V8
+with only its compilers off still compiles regular expressions, about 5 times
+faster than this, so a CPU run without `--regexp-interpret-all` understates
+the cost in an engine without a JIT. The core's bundle (alpha.7) loaded in
+both QuickJS engines in 10 to 40 ms, processed the BBB playlists in 1 ms, and
+gave the same infohashes as in Node and in browsers.
+
 ## Measurements that decide
 
 The design is adopted when all of these pass. The CPU and memory limits are
@@ -122,11 +213,10 @@ it:
 
 1. **The core in Node, with libdatachannel through `node-datachannel`.** Node
    has the other browser APIs, so this tests interop alone. A run with V8's
-   compilers off (`--no-opt --no-maglev --no-sparkplug`) gives a first
-   estimate of the cost in an engine without a JIT. JavaScriptCore runs
-   without a JIT in an iOS app. Done; the results are below.
+   compilers and regular expression compiler off gives a first estimate of the
+   cost in an engine without a JIT, as QuickJS is. Done; the results are below.
 2. **Android:** QuickJS, the native APIs above, and Media3. All checks.
-3. **iOS:** JavaScriptCore, the native APIs above, and AVPlayer. All checks.
+3. **iOS:** QuickJS, the native APIs above, and AVPlayer. All checks.
 
 If interop fails in step 1, both designs have a problem, and it is solved
 before anything else. If the CPU or thermal checks fail in step 2 or 3, the
@@ -152,17 +242,22 @@ one Mac.
   the join included; that is not a matched window, so it is not compared
   with the numbers above.
 - **CPU: an early estimate, not a result.** Two Node peers played 10 minutes
-  in one swarm, twice. In the first pair both peers used V8's JIT; in the
-  second, one peer ran on V8's interpreter alone. The main threads were busy
-  1.1% to 1.6% of the time in all four runs, with no consistent difference
-  between the JIT and the interpreter: 1.2% and 1.3% with the JIT, 1.6% on
-  the interpreter, 1.1% for its JIT peer. The processes, with all their
-  threads, used 3.1% to 3.4% of one core. These are upper bounds for the
-  core: in Node they include HTTP, TLS and the test player. As a rough guess,
-  not a measurement: if a mid-range phone core is 2 to 3 times slower than
-  the Mac's, and QuickJS 2 to 3 times slower than V8's interpreter, 1.6%
-  becomes 6% to 15% of one core in the worst case. How JavaScriptCore without
-  a JIT compares is not known yet. The check is made on a phone in step 2.
+  in one swarm, three times. In the first pair both peers used V8's JIT; in
+  the second, one peer ran with V8's compilers off; in the third, one peer
+  ran with its regular expression compiler off as well
+  (`--regexp-interpret-all`), as in an engine without a JIT. The main threads
+  were busy 1.1% to 1.7% of the time in all six runs: 1.2%, 1.3%, 1.1% and
+  1.3% with the JIT, 1.6% with the compilers off, and 1.7% with regular
+  expressions interpreted too. So the core's JS work is small, and
+  interpreting it adds little. The processes, with all their threads, used
+  3.0% to 3.4% of one core. These are upper bounds for the core: in Node they
+  include HTTP, TLS and the test player. As a rough guess, not a
+  measurement: if a mid-range phone core is 2 to 3 times slower than the
+  Mac's, and Bellard's QuickJS 1.5 to 1.7 times slower than V8's
+  interpreter (see "The speed of QuickJS, measured"), 1.7% becomes about 5%
+  to 9% of one core for the JS work alone; with quickjs-ng, up to 11%. The
+  10% pass limit is for the whole library, native threads included, so this
+  is not a pass. The check is made on a phone in step 2.
 
 What step 1 does not show, and steps 2 and 3 must: peers on different
 networks and behind NATs, more than two peers, the handling of a closed

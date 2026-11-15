@@ -21,9 +21,10 @@ candidate designs recorded with the measurement that would justify building
 them. When a proposal is adopted, it is folded into the spec it extends and
 removed from the folder. When it is rejected, it is deleted.
 
-| Proposal                                     | Would decide                                                   |
-| -------------------------------------------- | -------------------------------------------------------------- |
-| [js-core-host.md](proposals/js-core-host.md) | Whether the library runs the web core in an embedded JS engine |
+| Proposal                                                       | Would decide                                                   |
+| -------------------------------------------------------------- | -------------------------------------------------------------- |
+| [js-core-host.md](proposals/js-core-host.md)                   | Whether the library runs the web core in an embedded JS engine |
+| [javascriptcore-on-ios.md](proposals/javascriptcore-on-ios.md) | The engine's size and memory in iOS apps                       |
 
 ## Keeping these current
 

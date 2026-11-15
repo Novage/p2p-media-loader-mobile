@@ -76,8 +76,10 @@ has started:
   peak, Node's own baseline included.
 
 To run the core's JS on V8's interpreter alone, as in an engine without a
-JIT, turn V8's compilers off:
-`node --no-opt --no-maglev --no-sparkplug --no-experimental-webstorage src/main.ts …`.
+JIT, turn V8's compilers and its regular expression compiler off:
+`node --no-opt --no-maglev --no-sparkplug --regexp-interpret-all --no-experimental-webstorage src/main.ts …`.
+With the compilers off alone, V8 still compiles regular expressions to
+native code, about 5 times faster than an interpreter runs them.
 `--jitless` does not work: it removes WebAssembly, which Node needs for
 TypeScript type stripping and for `fetch`.
 
