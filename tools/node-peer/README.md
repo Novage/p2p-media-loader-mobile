@@ -21,8 +21,20 @@ pnpm start
 ```
 
 `pnpm start` runs `src/main.ts` directly; Node strips the types. Check the
-types with `pnpm type-check`. `pnpm test` checks that the WebRTC the tool
-gives the core works the way the core uses it.
+types with `pnpm type-check`.
+
+`pnpm start [stream URL]` gives the core the stream's master playlist and the
+media playlist of its highest bitrate, where web viewers on a good connection
+play. The default stream is `https://live.novage.workers.dev/bbb/live.m3u8`.
+It prints each stream the core registered, with the infohash it announces to
+trackers, so it can be compared with a web peer's swarm on the same stream.
+Then it asks the core whether the newest segment is loadable. The answer is
+`false`, and the exit code 1, when the core saw no WebRTC at load, when the
+segment is not in its registry, or when it did not match the media playlist
+to the master's stream.
+
+`pnpm test` checks that the WebRTC the tool gives the core works the way the
+core uses it.
 
 ## How the core runs
 
