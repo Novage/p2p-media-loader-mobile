@@ -2,6 +2,8 @@
 // with the P2P Media Loader adapter plays it in a browser: one quality,
 // placed and buffered by the core's live rules, one segment request at a
 // time, and playback reported every 250 ms and before each request.
+// Node's own: the DOM lib's Performance type has no eventLoopUtilization.
+import { performance as nodePerformance } from "node:perf_hooks";
 import type * as CoreApi from "p2p-media-loader-core";
 import { fetchPlaylist, parseMediaPlaylist } from "./hls.ts";
 import { PlaybackModel, Timeline } from "./player.ts";
@@ -38,6 +40,15 @@ export type Summary = {
   bytes: { http: number; p2p: number; uploaded: number };
   peers: { connected: number; mostAtOnce: number };
   trackerErrors: number;
+  /**
+   * Over the playing window, from the placement to the end: the share of the
+   * time the event loop was busy (JS, native callbacks, garbage collection
+   * pauses), and the CPU time of all the process's threads in percent of one
+   * core. Upper bounds for the core: they include HTTP, TLS and this player.
+   */
+  cpu: { mainThreadBusy: number; processPercent: number };
+  /** Resident memory in MiB: at the start of playback, and the process's peak. */
+  memory: { atStartMiB: number; peakMiB: number };
   /** The error that ended the run, if one did. */
   error?: unknown;
 };
@@ -98,6 +109,10 @@ export async function play(options: PlayOptions): Promise<Summary> {
   say(
     `${main.streamId}: live delay ${target.delay} s, buffer up to ${maxBuffer} s`,
   );
+  const loopAtStart = nodePerformance.eventLoopUtilization();
+  const cpuAtStart = process.cpuUsage();
+  const playingFrom = performance.now();
+  const memoryAtStart = process.memoryUsage().rss / 1024 / 1024;
 
   const segmentCounts = { core: 0, direct: 0, failed: 0 };
   const reloads = { changed: 0, unchanged: 0, failed: 0 };
@@ -298,6 +313,19 @@ export async function play(options: PlayOptions): Promise<Summary> {
   core.removeEventListener("onTrackerError", onTrackerError);
 
   advance();
+  const playingMs = performance.now() - playingFrom;
+  const cpuTime = process.cpuUsage(cpuAtStart);
+  const cpu = {
+    mainThreadBusy:
+      nodePerformance.eventLoopUtilization(loopAtStart).utilization,
+    // cpuUsage is in microseconds.
+    processPercent: (cpuTime.user + cpuTime.system) / 10 / playingMs,
+  };
+  const memory = {
+    atStartMiB: memoryAtStart,
+    // maxRSS is in KiB.
+    peakMiB: process.resourceUsage().maxRSS / 1024,
+  };
   const loaded = segmentCounts.core + segmentCounts.direct;
   return {
     seconds: (performance.now() - startedAt) / 1000,
@@ -311,6 +339,8 @@ export async function play(options: PlayOptions): Promise<Summary> {
     bytes,
     peers,
     trackerErrors,
+    cpu,
+    memory,
     error: fatal,
   };
 }
@@ -337,5 +367,9 @@ export const formatSummary = (summary: Summary): string[] => {
       `at once; ${summary.trackerErrors} tracker errors`,
     `playlist   ${reloads.changed} reloads changed, ${reloads.unchanged} ` +
       `unchanged, ${reloads.failed} failed`,
+    `cpu        main thread ${(100 * summary.cpu.mainThreadBusy).toFixed(1)} % ` +
+      `busy, process ${summary.cpu.processPercent.toFixed(1)} % of one core`,
+    `memory     ${Math.round(summary.memory.atStartMiB)} MiB at the start, ` +
+      `${Math.round(summary.memory.peakMiB)} MiB peak`,
   ];
 };

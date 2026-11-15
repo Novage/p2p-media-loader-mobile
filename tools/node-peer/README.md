@@ -69,6 +69,20 @@ has started:
   errors. An `--isolated` run shows no peer and a P2P share of 0; it still
   announces to trackers, so tracker errors can count;
 - `playlist`: playlist reloads that changed, did not change, and failed.
+- `cpu`, over the playing window: the share of time the main thread was busy
+  (JS, native callbacks and garbage collection pauses on it), and the CPU
+  time of all the process's threads in percent of one core (also
+  libdatachannel and V8's helper threads). Both are upper bounds for the
+  core: they also count HTTP and TLS, which run on the main thread in Node,
+  and this test player's own work;
+- `memory`: the process's resident memory at the start of playback and its
+  peak, Node's own baseline included.
+
+To run the core's JS on V8's interpreter alone, as in an engine without a
+JIT, turn V8's compilers off:
+`node --no-opt --no-maglev --no-sparkplug --no-experimental-webstorage src/main.ts …`.
+`--jitless` does not work: it removes WebAssembly, which Node needs for
+TypeScript type stripping and for `fetch`.
 
 The run stops with exit code 1 on an error: among others, when the core does
 not load the stream's segments at the start (no WebRTC, P2P off, or a stream
