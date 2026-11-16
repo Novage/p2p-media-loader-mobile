@@ -80,6 +80,9 @@ its own, tested with web peers in the same swarm.
     clang-format or whitespace finding; Gradle deprecations do not fail it
     yet (see KNOWN-ISSUES.md). Fix a finding; suppress one only where the
     code is deliberate, with the reason next to it.
+  - CI (`.github/workflows/build.yml`) runs the same `./gradlew build` on
+    Linux for each push and pull request to `next`; it does not run the
+    device test or the `tools/node-peer` checks.
   - For a change to `native/` or to the engine: also
     `./gradlew :library:connectedAndroidDeviceTest` on a connected device.
   - For a change in `tools/node-peer`: `npm test` and `npm run type-check`

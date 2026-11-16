@@ -1,0 +1,45 @@
+# Runs the full build, as AGENTS.md asks before each commit: the code checks,
+# the Android libraries, the C tests (ASan, UBSan) and the JVM host tests. The
+# device test needs a phone and does not run here.
+name: Build
+
+on:
+  push:
+    branches: [next]
+  pull_request:
+    branches: [next]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # The lowest JDK that the README names.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The versions come from the catalog, so a new pin needs no change here.
+      - name: Install the NDK and CMake
+        run: |
+          version() { sed -n "s/^$1 = \"\(.*\)\"$/\1/p" gradle/libs.versions.toml; }
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;$(version ndk)" "cmake;$(version cmake)" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          # Writes the cache on `next` too, which is not the default branch.
+          cache-read-only: ${{ github.ref != 'refs/heads/next' }}
+
+      - run: ./gradlew build --console=plain
