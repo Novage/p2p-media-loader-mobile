@@ -20,14 +20,28 @@ typedef void p2pml_task_run(p2pml_engine *engine, void *data);
 // is freed: so `data` holds no JS value.
 typedef void p2pml_task_discard(void *data);
 
+// The levels of the lines that the engine writes, in this order.
+typedef enum {
+  P2PML_LOG_DEBUG,
+  P2PML_LOG_INFO,
+  P2PML_LOG_WARN,
+  P2PML_LOG_ERROR,
+} p2pml_log_level;
+
+// Writes a line: from console, or the report of an uncaught error. Called on
+// the engine thread while p2pml_engine_run runs. `message` is CESU-8 (see
+// p2pml_eval_result) and stays the engine's.
+typedef void p2pml_log_write(void *data, p2pml_log_level level, const char *message);
+
 // Returns NULL when out of memory. Any thread.
 p2pml_engine *p2pml_engine_new(void);
 
 // Runs the engine on the calling thread, which becomes the engine thread, and
-// returns after p2pml_engine_close. Creates the QuickJS runtime on entry and
-// frees it on return. Returns false if the runtime cannot be created; the
-// engine is then closed. Call it once.
-bool p2pml_engine_run(p2pml_engine *engine);
+// returns after p2pml_engine_close. Creates the QuickJS runtime and the
+// globals (specs/engine.md, "Globals") on entry and frees them on return; the
+// engine writes its lines through `log`. Returns false if the runtime or its
+// globals cannot be created; the engine is then closed. Call it once.
+bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data);
 
 // Adds a task to the end of the queue. Any thread. Returns false, and keeps
 // `data` with the caller, once the engine is closed or when out of memory.
@@ -48,7 +62,8 @@ void p2pml_engine_close(p2pml_engine *engine);
 // or close runs during or after it.
 void p2pml_engine_free(p2pml_engine *engine);
 
-// The engine's context. Engine thread only, while p2pml_engine_run runs.
+// The engine's context. Engine thread only, while p2pml_engine_run runs. Its
+// opaque (JS_SetContextOpaque) is the engine's own: do not change it.
 JSContext *p2pml_engine_context(p2pml_engine *engine);
 
 // The result of p2pml_engine_eval. The strings are CESU-8, which is the JVM's
@@ -73,7 +88,8 @@ typedef struct {
 
 // Evaluates a script in the global scope. Engine thread only. `code` must
 // end with a NUL at code[length], as QuickJS requires. Returns true on
-// success. Promise jobs that the script queues run after the current task.
+// success; its exception goes to the result, not to the log. Promise jobs
+// that the script queues run after the current task.
 // Once the engine is closed, it fails with `closed`, also when the script
 // completed.
 bool p2pml_engine_eval(p2pml_engine *engine, const char *code, size_t length, const char *file_name,

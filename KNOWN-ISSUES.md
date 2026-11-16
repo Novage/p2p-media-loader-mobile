@@ -15,10 +15,16 @@ that describes the behaviour, not here.
   includes QuickJS (MIT), whose notice must reach the app's users. How the
   library gives its notices to apps (a file in the AAR, the documentation) is
   decided when publishing is set up.
-- **Uncaught JS errors are not reported.** An exception from a Promise job
-  (a FinalizationRegistry callback, a failure of QuickJS) and a rejected
-  Promise without a handler are dropped with no log (`run_jobs` in
-  `native/src/engine.c`). The report of uncaught errors comes with `console`.
+- **The close cannot stop every endless loop.** The engine stops JS with an
+  error that JS cannot catch (specs/engine.md, "Closing"), but QuickJS
+  changes that error on some paths. An async function, a Promise executor,
+  `Promise.try` and the other Promise functions that call JS turn it into a
+  rejected Promise. The close of an iterator after an error (in `Array.from`
+  with a map function, iterator helpers, the `Map` and `Set` constructors,
+  spread and `Object.fromEntries`) makes it an error that `catch` catches. A
+  loop around such a path goes on after the close and keeps the engine
+  thread busy, such as `for (;;) spin()`, where `spin` is an async function
+  with an endless loop. The core has no endless loop.
 - **No native library for 32-bit x86.** `native/` builds arm64-v8a,
   armeabi-v7a and x86_64 only. On an x86 device or emulator, an app with no
   other x86 code runs the ARM library through translation where the system

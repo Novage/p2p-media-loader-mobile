@@ -3,8 +3,9 @@ package com.novage.p2pml.engine
 import java.util.concurrent.TimeUnit
 
 /**
- * A QuickJS engine on a thread of its own, which runs posted tasks one at a time. Only the engine
- * thread touches the JS runtime: tasks call [evaluateScript]. See specs/engine.md.
+ * A QuickJS engine on a thread of its own, which runs posted tasks and JS timers one at a time.
+ * Only the engine thread touches the JS runtime: tasks call [evaluateScript]. Console lines and
+ * uncaught JS errors go to [log]. See specs/engine.md.
  */
 internal class JsEngine(private val log: JsLog = JsLog.logcat) {
     private val lock = Any()
@@ -53,7 +54,8 @@ internal class JsEngine(private val log: JsLog = JsLog.logcat) {
     /**
      * Closes the engine from any thread, also from a task, without waiting: JS that still runs
      * stops with an uncatchable error, the current task finishes, then no JS runs, the thread frees
-     * the runtime, drops the pending tasks, and ends. Closing again does nothing.
+     * the runtime and the pending timers, drops the pending tasks, and ends. Closing again does
+     * nothing.
      */
     fun close() {
         synchronized(lock) {
@@ -69,8 +71,11 @@ internal class JsEngine(private val log: JsLog = JsLog.logcat) {
 
     private fun runEngine() {
         try {
-            if (!NativeEngine.run(handle)) {
-                log.write(JsLog.Level.ERROR, "The JS runtime could not be created")
+            val sink = NativeEngine.LogSink { level, message ->
+                log.write(JsLog.Level.entries[level], message)
+            }
+            if (!NativeEngine.run(handle, sink)) {
+                log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")
             }
         } finally {
             synchronized(lock) {

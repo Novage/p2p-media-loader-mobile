@@ -13,6 +13,7 @@ static jmethodID runnable_run;
 static jclass js_exception_class;
 static jmethodID js_exception_init;
 static jclass closed_exception_class;
+static jmethodID log_sink_write;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   (void)reserved;
@@ -44,6 +45,14 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   // ThrowNew needs this constructor: missing, the library does not load.
   if (closed_exception_class == NULL ||
       (*env)->GetMethodID(env, closed, "<init>", "(Ljava/lang/String;)V") == NULL) {
+    return JNI_ERR;
+  }
+  jclass log_sink = (*env)->FindClass(env, "com/novage/p2pml/engine/NativeEngine$LogSink");
+  if (log_sink == NULL) {
+    return JNI_ERR;
+  }
+  log_sink_write = (*env)->GetMethodID(env, log_sink, "write", "(ILjava/lang/String;)V");
+  if (log_sink_write == NULL) {
     return JNI_ERR;
   }
   return JNI_VERSION_1_6;
@@ -96,11 +105,42 @@ JNIEXPORT jlong JNICALL Java_com_novage_p2pml_engine_NativeEngine_create(JNIEnv 
   return (jlong)(intptr_t)engine;
 }
 
+// The log of a running engine: `env` and `sink` are run()'s, valid on the
+// engine thread until run() returns, and the log is written only there and
+// then.
+typedef struct {
+  JNIEnv *env;
+  p2pml_engine *engine;
+  jobject sink;
+} engine_log;
+
+// Writes a line through NativeEngine.LogSink. A Java exception from it, such
+// as OutOfMemoryError, stays pending and closes the engine; until the engine
+// thread returns to Kotlin, no JNI call that a pending exception forbids runs.
+static void write_log(void *data, p2pml_log_level level, const char *message) {
+  engine_log *log = data;
+  JNIEnv *env = log->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  // The strings are CESU-8, which NewStringUTF reads as modified UTF-8.
+  jstring text = (*env)->NewStringUTF(env, message);
+  if (text != NULL) {
+    (*env)->CallVoidMethod(env, log->sink, log_sink_write, (jint)level, text);
+    // run() can write many lines: its local references stay until it returns.
+    (*env)->DeleteLocalRef(env, text);
+  }
+  if ((*env)->ExceptionCheck(env)) {
+    p2pml_engine_close(log->engine);
+  }
+}
+
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv *env, jclass type,
-                                                                         jlong handle) {
-  (void)env;
+                                                                         jlong handle,
+                                                                         jobject sink) {
   (void)type;
-  return p2pml_engine_run(engine_of(handle));
+  engine_log log = {.env = env, .engine = engine_of(handle), .sink = sink};
+  return p2pml_engine_run(log.engine, write_log, &log);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_post(JNIEnv *env, jclass type,
@@ -132,7 +172,7 @@ JNIEXPORT void JNICALL Java_com_novage_p2pml_engine_NativeEngine_free(JNIEnv *en
   p2pml_engine_free(engine_of(handle));
 }
 
-// The strings are CESU-8, which NewStringUTF reads as modified UTF-8.
+// The strings are CESU-8, as in write_log().
 static void throw_js_exception(JNIEnv *env, const p2pml_eval_result *result) {
   jstring message = (*env)->NewStringUTF(env, result->error);
   if (message == NULL) {
@@ -173,7 +213,9 @@ JNIEXPORT jstring JNICALL Java_com_novage_p2pml_engine_NativeEngine_evaluateScri
   (*env)->ReleaseStringUTFChars(env, file_name, name);
   free(source);
   jstring value = NULL;
-  if (result.closed) {
+  if ((*env)->ExceptionCheck(env)) {
+    // From the log, while the script ran (see write_log): it goes to Kotlin.
+  } else if (result.closed) {
     (*env)->ThrowNew(env, closed_exception_class, "The JS engine is closed");
   } else if (ok ? result.value == NULL : result.error == NULL) {
     throw_out_of_memory(env);

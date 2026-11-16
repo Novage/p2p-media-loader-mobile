@@ -2,17 +2,17 @@
 
 The library runs the web core in QuickJS (see the proposal
 [js-core-host.md](proposals/js-core-host.md) for why). This spec describes the
-engine that hosts it: its thread, its loop of tasks, and the rules for the
-code that calls it.
+engine that hosts it: its thread, its loop of tasks, the globals it adds, and
+the rules for the code that calls it.
 
 ## Where the code is
 
-| Part                                    | Code                                                     |
-| --------------------------------------- | -------------------------------------------------------- |
-| QuickJS, Bellard's release as released  | `native/third_party/quickjs/` (version in its README.md) |
-| The engine: the loop, tasks, evaluation | `native/src/engine.h`, `native/src/engine.c`             |
-| The JNI glue, nothing else              | `native/src/jni.c`                                       |
-| The engine for Kotlin                   | `library/src/androidMain/…/engine/JsEngine.kt`           |
+| Part                                   | Code                                                     |
+| -------------------------------------- | -------------------------------------------------------- |
+| QuickJS, Bellard's release as released | `native/third_party/quickjs/` (version in its README.md) |
+| The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`             |
+| The JNI glue, nothing else             | `native/src/jni.c`                                       |
+| The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`           |
 
 The engine is plain C, so that iOS calls the same code through cinterop, and
 native libraries such as libdatachannel call it with no JNI. The C code and
@@ -41,6 +41,44 @@ After each task, the engine runs QuickJS's Promise jobs until none is left,
 before the next task: as a browser runs microtasks after a task. So a Promise
 that a task resolves has run its reactions before the next task starts.
 
+A timer that is due (see "Globals") runs as a task does, with the Promise
+jobs after it. Tasks and due timers take turns, so a long queue of one does
+not stop the other.
+
+## Globals
+
+The engine adds the globals of a browser that the web core uses and QuickJS
+does not have. They are in C, so iOS gets the same ones.
+
+- **`setTimeout(callback, delay, ...args)` and `clearTimeout(id)`**, as in a
+  browser, with two differences: the callback must be a function, else
+  `setTimeout` throws a `TypeError` (a browser also takes a string of code);
+  and there is no `setInterval`, which the core does not use. The delay is
+  converted as WebIDL's `long` is: NaN and Infinity are 0, a number is taken
+  modulo 2³² as a signed 32-bit integer (so 2³¹ is negative), and a negative
+  delay is 0. As in a browser, a timer set by a timer that is nested more
+  than 5 deep has a delay of at least 4 ms, so a chain of `setTimeout(f, 0)`
+  does not keep the thread busy. The callback gets the global object as
+  `this`. The id is a positive number that grows; `clearTimeout` with an
+  unknown id does nothing. Due timers run in the order of their deadlines,
+  then in the order of their `setTimeout` calls.
+- **`performance.now()`**: milliseconds since the engine started, with a
+  fraction.
+- **The clock** of the timers and of `performance.now()` is monotonic
+  (`CLOCK_MONOTONIC`, on Apple platforms `CLOCK_UPTIME_RAW`): it does not
+  follow changes of the wall clock, and it stops while the device sleeps, as
+  Chrome's does.
+- **`console.debug`, `log`, `info`, `warn` and `error`** write one line to
+  the log: the arguments, joined by spaces. A string is written as it is, an
+  `Error` as its string and then its stack on the next lines, and any other
+  value converted as `${value}` does (an object gives `[object Object]`; a
+  Symbol, which cannot be converted, gives a placeholder). There is no `%s`
+  or `%c` substitution. On Android the log is Logcat, with the tag `P2PML`:
+  `debug` at DEBUG, `log` and `info` at INFO, `warn` at WARN, `error` at
+  ERROR. A `console` call that the close stops, or that starts after it,
+  writes nothing and throws the close's error.
+- **`window`**, which is `globalThis`.
+
 ## Closing
 
 Any thread closes the engine, also a task of the engine. Closing does not
@@ -57,7 +95,7 @@ wait, so the app's main thread never waits for JS:
    after `close` returns. So a function that the engine gives to JS checks
    the close itself before it uses a resource that the close releases.
 
-3. The runtime is freed.
+3. The runtime is freed, with the timers that did not run.
 4. The tasks still queued are dropped; each frees what it holds, which is
    never a JS value. Then the thread ends.
 
@@ -67,19 +105,31 @@ Closing again does nothing.
 
 - A JS exception from a script that Kotlin evaluates throws `JsException`,
   with the exception converted to a string as its message, and its `stack`.
+- An exception that JS does not catch, from a timer's callback or from a
+  Promise job (a FinalizationRegistry callback), goes to the log as an
+  error: `Uncaught `, then the exception as `console` writes it. The loop
+  continues.
+- A Promise that is rejected with no handler goes to the log as an error:
+  `Uncaught (in promise) `, then the reason. It is written after the Promise
+  jobs of its task or timer have run, and only if no handler was added by
+  then, as a browser does; it is written once.
+- Nothing is reported once the engine is closed: the error is then likely
+  the close's.
 - An exception from a Kotlin task is a defect of the library. The engine logs
   it as an error and runs the next task, as a browser does with an exception
   from an event handler. A `JsEngineClosedException` is not logged: the
   close caused it. So a task lets it through, not wrapped in another
   exception. An `Error`, such as `OutOfMemoryError`, ends the engine thread,
-  as in any thread of the app.
+  as in any thread of the app. So does an exception from the log, which
+  closes the engine.
 
 ## Strings between JS and Kotlin
 
-QuickJS gives strings to Kotlin as CESU-8, which is the JVM's modified UTF-8:
-a character outside the Basic Multilingual Plane is a surrogate pair, each
-half in three bytes. So JNI reads it as it is, and Android's CheckJNI does not
-stop the app. One difference remains: U+0000 ends the string in Kotlin.
+QuickJS gives strings to Kotlin, results and log lines, as CESU-8, which is
+the JVM's modified UTF-8: a character outside the Basic Multilingual Plane is
+a surrogate pair, each half in three bytes. So JNI reads it as it is, and
+Android's CheckJNI does not stop the app. One difference remains: U+0000 ends
+the string in Kotlin.
 
 Kotlin gives code to QuickJS as UTF-8 bytes, followed by the NUL that QuickJS
 needs.

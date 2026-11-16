@@ -1,7 +1,8 @@
 # Rules for the apps that shrink the library with R8.
 
 # native/src/jni.c: the JNI function names follow these names, and JNI_OnLoad
-# finds the exceptions' classes and constructors by name.
+# finds the exceptions' classes and constructors, and the log sink's method,
+# by name.
 -keep class com.novage.p2pml.engine.NativeEngine {
     native <methods>;
 }
@@ -10,4 +11,7 @@
 }
 -keep class com.novage.p2pml.engine.JsEngineClosedException {
     <init>(java.lang.String);
+}
+-keep interface com.novage.p2pml.engine.NativeEngine$LogSink {
+    void write(int, java.lang.String);
 }
