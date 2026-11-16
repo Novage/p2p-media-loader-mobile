@@ -1,0 +1,17 @@
+# clang-tidy for our C sources (CMakeLists.txt runs it in the host build, every
+# finding an error). QuickJS's sources are not checked, and its headers are
+# system headers to the compiler.
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -bugprone-easily-swappable-parameters
+# Why each check is off:
+# - DeprecatedOrUnsafeBufferHandling wants C11 Annex K (memcpy_s), which
+#   Android's and Linux's C libraries do not have.
+# - easily-swappable-parameters flags any two adjacent parameters of one type,
+#   such as (code, length) pairs; the names carry the meaning.
+WarningsAsErrors: "*"

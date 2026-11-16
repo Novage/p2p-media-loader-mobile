@@ -23,6 +23,7 @@ The library runs the web core, unchanged, in a JS engine embedded in the app:
 | iOS      | QuickJS |
 
 One engine on both platforms shares the binding and the native shims. The
+engine's thread, loop and closing are in the spec [engine.md](../engine.md). The
 system's JavaScriptCore on iOS would save the engine's code size there, and
 possibly memory; it is the proposal
 [javascriptcore-on-ios.md](javascriptcore-on-ios.md).

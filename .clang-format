@@ -1,0 +1,4 @@
+# clang-format for our C sources, run through Spotless with the NDK's
+# clang-format. The column limit is ktfmt's.
+BasedOnStyle: LLVM
+ColumnLimit: 100

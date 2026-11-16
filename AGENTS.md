@@ -74,10 +74,14 @@ its own, tested with web peers in the same swarm.
 - **Verify before reporting done:**
   - `./gradlew spotlessApply`, then `./gradlew build`, with `JAVA_HOME` set
     as the README says. The build fails on a warning from the Kotlin
-    compiler, Android lint, detekt (with type resolution), and on a ktfmt or
-    whitespace finding; Gradle deprecations do not fail it yet (see
-    KNOWN-ISSUES.md). Fix a finding; suppress one only where the code is
-    deliberate, with the reason next to it.
+    compiler, Android lint, detekt (with type resolution), the C compiler and
+    clang-tidy, on a failed test (the JVM tests and the C tests with
+    AddressSanitizer and UndefinedBehaviorSanitizer), and on a ktfmt,
+    clang-format or whitespace finding; Gradle deprecations do not fail it
+    yet (see KNOWN-ISSUES.md). Fix a finding; suppress one only where the
+    code is deliberate, with the reason next to it.
+  - For a change to `native/` or to the engine: also
+    `./gradlew :library:connectedAndroidDeviceTest` on a connected device.
   - For a change in `tools/node-peer`: `npm test` and `npm run type-check`
     there.
   - Prettier on the changed files, with the version `tools/node-peer` pins
@@ -87,6 +91,12 @@ its own, tested with web peers in the same swarm.
   and not fixed gets an entry; a fix removes its entry.
 - Match the surrounding code's style, comment density and naming. Comments
   explain _why_; they do not restate the code.
+- **C in `native/`:** C11 with GNU extensions (gnu11, for POSIX and platform
+  functions), no C++. Each function that takes or
+  returns a `JSValue` says who frees it; QuickJS's leak check in the C tests
+  catches a value not freed. Only the engine thread touches a runtime (see
+  [`specs/engine.md`](specs/engine.md)). `native/third_party/` holds code as
+  released: never edit it, update it as its README says.
 
 ## Things that are deliberate, not oversights
 

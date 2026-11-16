@@ -10,9 +10,10 @@ identity and the core's behaviour are specified in the web repository,
 [P2P Media Loader](https://github.com/Novage/p2p-media-loader), in its
 `specs/` folder.
 
-| Spec                 | Covers                                                     |
-| -------------------- | ---------------------------------------------------------- |
-| [scope.md](scope.md) | Platforms, players and streams, and which requests get P2P |
+| Spec                   | Covers                                                         |
+| ---------------------- | -------------------------------------------------------------- |
+| [scope.md](scope.md)   | Platforms, players and streams, and which requests get P2P     |
+| [engine.md](engine.md) | The JS engine that runs the core: its thread, loop and closing |
 
 ## Proposals
 

@@ -16,8 +16,12 @@ published. The current version, an Android library, is on the
 
 ## Build
 
-You need the Android SDK and JDK 17 or later. `./gradlew` uses the JDK that
-`JAVA_HOME` or `PATH` names; to use Android Studio's own, on a Mac:
+You need the Android SDK, with the NDK and CMake versions that
+`gradle/libs.versions.toml` names (Android Studio's SDK Manager installs
+them, under "SDK Tools", with "Show Package Details"), JDK 17 or later, and a
+C compiler for the computer, for the C tests (on a Mac, Xcode's Command Line
+Tools).
+`./gradlew` uses the JDK that `JAVA_HOME` or `PATH` names; to use Android Studio's own, on a Mac:
 `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`.
 Set the SDK's path in `ANDROID_HOME` or in `local.properties` (`sdk.dir=…`), or
 open the project in Android Studio, which writes `local.properties`.
@@ -25,6 +29,7 @@ open the project in Android Studio, which writes `local.properties`.
 | Gradle module     | What it is                                              |
 | ----------------- | ------------------------------------------------------- |
 | `library`         | The Kotlin Multiplatform library                        |
+| `native`          | QuickJS and the JS engine in C, built with the NDK      |
 | `samples/android` | A sample app that plays the BBB live stream with Media3 |
 
 `tools/node-peer` is a Node tool, not a Gradle module: it runs the web core as
@@ -42,11 +47,13 @@ a peer; see its README.
 ./gradlew :samples:android:installDebug
 ```
 
-`spotlessApply` formats the Kotlin and Gradle files with ktfmt, and fixes
-trailing whitespace and final newlines in the other build files. `build`
-compiles both modules, runs the library's tests, and fails on a warning from
-the compiler, Android lint, detekt (with type resolution) or the format check. The last command installs the sample on a connected device or a
-running emulator.
+`spotlessApply` formats the Kotlin and Gradle files with ktfmt and the C files
+with clang-format, and fixes trailing whitespace and final newlines in the
+other build files. `build`
+compiles the modules, runs the library's tests and the C tests, and fails on a
+warning from the compilers, Android lint, detekt (with type resolution),
+clang-tidy or the format checks. The last command installs the sample on a
+connected device or a running emulator.
 
 ## License
 

@@ -6,6 +6,8 @@ plugins {
 android {
     namespace = "com.novage.p2pml.sample"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
+    // The NDK strips the native library of the APK.
+    ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
         // Explicit, so that the app's identity does not follow a package rename.

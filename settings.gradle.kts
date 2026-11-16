@@ -28,4 +28,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "p2p-media-loader-mobile"
 
-include(":library", ":samples:android")
+include(":library", ":native", ":samples:android")
