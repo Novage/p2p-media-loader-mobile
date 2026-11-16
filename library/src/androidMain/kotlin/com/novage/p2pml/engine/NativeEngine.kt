@@ -14,7 +14,7 @@ internal object NativeEngine {
 
     /**
      * Blocks until the engine is closed, and writes the engine's lines to [log] meanwhile. False if
-     * the runtime or its globals could not be created.
+     * the runtime or its globals could not be created, and no close came first.
      */
     @JvmStatic external fun run(engine: Long, log: LogSink): Boolean
 

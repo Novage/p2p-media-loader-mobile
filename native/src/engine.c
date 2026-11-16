@@ -1,5 +1,8 @@
 #include "engine.h"
 
+#include "encoding.h"
+#include "polyfills.h"
+
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -499,15 +502,43 @@ static const JSCFunctionListEntry global_functions[] = {
     JS_OBJECT_DEF("performance", performance_functions, COUNT(performance_functions), GLOBAL),
 };
 
-// The globals that QuickJS does not have and the web core needs. False when
-// out of memory.
-static bool add_globals(JSContext *context) {
+// Evaluates each polyfill (src/polyfills/*.js), a function expression, and
+// calls it with the natives: the C helpers that the polyfills use, which do
+// not become globals. False when one fails; its error goes to the log.
+static bool add_polyfills(p2pml_engine *engine) {
+  JSContext *context = engine->context;
+  JSValue natives = JS_NewObject(context);
+  bool added = !JS_IsException(natives) && p2pml_add_encoding(context, natives);
+  for (int i = 0; added && i < p2pml_polyfills_count; i++) {
+    const p2pml_script *script = &p2pml_polyfills[i];
+    const char *source = (const char *)script->source;
+    // Strict: a stray assignment fails here, not as a new global.
+    JSValue install = JS_Eval(context, source, strlen(source), script->name,
+                              JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_STRICT);
+    JSValue result = JS_IsException(install)
+                         ? JS_EXCEPTION
+                         : JS_Call(context, install, JS_UNDEFINED, 1, (JSValueConst *)&natives);
+    added = !JS_IsException(result);
+    JS_FreeValue(context, result);
+    JS_FreeValue(context, install);
+  }
+  if (!added) {
+    report_exception(engine);
+  }
+  JS_FreeValue(context, natives);
+  return added;
+}
+
+// The globals that QuickJS does not have and the web core needs: those in C,
+// then the polyfills. False when one cannot be added.
+static bool add_globals(p2pml_engine *engine) {
+  JSContext *context = engine->context;
   JSValue global = JS_GetGlobalObject(context);
   bool added =
       JS_SetPropertyFunctionList(context, global, global_functions, COUNT(global_functions)) == 0 &&
       JS_SetPropertyStr(context, global, "window", JS_DupValue(context, global)) >= 0;
   JS_FreeValue(context, global);
-  return added;
+  return added && add_polyfills(engine);
 }
 
 // Stops JS that still runs when the engine closes, such as an endless loop.
@@ -532,9 +563,14 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   if (engine->context != NULL) {
     JS_SetContextOpaque(engine->context, engine);
   }
-  bool started = engine->context != NULL && add_globals(engine->context);
+  // A close can stop the polyfills' JS: that is not a failure to start.
+  bool started = engine->context != NULL && (add_globals(engine) || atomic_load(&engine->closed));
   if (!started) {
     p2pml_engine_close(engine);
+  }
+  if (engine->context != NULL) {
+    // The polyfills' Promise jobs and rejections, as after a task.
+    finish_js(engine);
   }
   while (!atomic_load(&engine->closed)) {
     task *next = take_task(engine);

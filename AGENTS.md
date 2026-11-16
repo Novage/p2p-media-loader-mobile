@@ -100,6 +100,9 @@ its own, tested with web peers in the same swarm.
   catches a value not freed. Only the engine thread touches a runtime (see
   [`specs/engine.md`](specs/engine.md)). `native/third_party/` holds code as
   released: never edit it, update it as its README says.
+- **JS in `native/`:** the polyfills (`native/src/polyfills/`) reach C only
+  through the natives object they get, and the JS tests are in
+  `native/test/js/`, run by the C tests. Prettier formats both.
 
 ## Things that are deliberate, not oversights
 

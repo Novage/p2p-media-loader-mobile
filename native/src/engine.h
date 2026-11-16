@@ -40,7 +40,8 @@ p2pml_engine *p2pml_engine_new(void);
 // returns after p2pml_engine_close. Creates the QuickJS runtime and the
 // globals (specs/engine.md, "Globals") on entry and frees them on return; the
 // engine writes its lines through `log`. Returns false if the runtime or its
-// globals cannot be created; the engine is then closed. Call it once.
+// globals cannot be created, unless a close came first: then it stopped them.
+// The engine is then closed. Call it once.
 bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data);
 
 // Adds a task to the end of the queue. Any thread. Returns false, and keeps

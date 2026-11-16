@@ -11,6 +11,7 @@ the rules for the code that calls it.
 | -------------------------------------- | -------------------------------------------------------- |
 | QuickJS, Bellard's release as released | `native/third_party/quickjs/` (version in its README.md) |
 | The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`             |
+| The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`     |
 | The JNI glue, nothing else             | `native/src/jni.c`                                       |
 | The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`           |
 
@@ -48,7 +49,8 @@ not stop the other.
 ## Globals
 
 The engine adds the globals of a browser that the web core uses and QuickJS
-does not have. They are in C, so iOS gets the same ones.
+does not have. They are in C or in the built-in JS polyfills (see
+"Polyfills"), so iOS gets the same ones.
 
 - **`setTimeout(callback, delay, ...args)` and `clearTimeout(id)`**, as in a
   browser, with two differences: the callback must be a function, else
@@ -78,6 +80,23 @@ does not have. They are in C, so iOS gets the same ones.
   ERROR. A `console` call that the close stops, or that starts after it,
   writes nothing and throws the close's error.
 - **`window`**, which is `globalThis`.
+- **`TextEncoder` and `TextDecoder`** of the WHATWG Encoding Standard, for
+  UTF-8 only: `encode`, and `decode` of an `ArrayBuffer`, a
+  `SharedArrayBuffer` or a view of one, with the options `fatal` and
+  `ignoreBOM`. A label of another encoding throws a `RangeError`, as an
+  unknown label does. `decode` with `{stream: true}` and `encodeInto` throw a
+  `TypeError`: the core does not use them.
+
+## Polyfills
+
+A global that is mostly API surface is written in JS, with its byte work in
+C. The JS files are in `native/src/polyfills/`; the build turns each into a
+C array (`embed_js` in `native/CMakeLists.txt`), so they are part of
+`libp2pml.so`. When the engine starts, after the globals in C, it evaluates
+each file in the order the build lists them. A file is one function
+expression, `(natives) => { … }`, which the engine calls with an object of
+C helpers; the helpers do not become globals. If a polyfill fails, the
+engine does not start, as when the runtime cannot be created.
 
 ## Closing
 

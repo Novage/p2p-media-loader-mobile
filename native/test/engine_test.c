@@ -10,6 +10,11 @@
 #include <string.h>
 
 #include "engine.h"
+#include "polyfills.h"
+
+// test/js/*.js, which CMakeLists.txt builds in: harness.js first.
+extern const p2pml_script p2pml_test_scripts[];
+extern const int p2pml_test_scripts_count;
 
 #define CHECK(condition)                                                                           \
   do {                                                                                             \
@@ -70,8 +75,14 @@ static pthread_t start_with_log(p2pml_engine *engine, captured_log *log) {
   run_args *args = malloc(sizeof *args);
   CHECK(args != NULL);
   *args = (run_args){.engine = engine, .log = log};
+  // As the Android engine thread (JsEngine.kt): QuickJS stops JS at 1 MiB of
+  // stack, more than a default pthread has on macOS.
+  pthread_attr_t attributes;
+  CHECK(pthread_attr_init(&attributes) == 0);
+  CHECK(pthread_attr_setstacksize(&attributes, (size_t)2 * 1024 * 1024) == 0);
   pthread_t thread;
-  CHECK(pthread_create(&thread, NULL, run_engine, args) == 0);
+  CHECK(pthread_create(&thread, &attributes, run_engine, args) == 0);
+  pthread_attr_destroy(&attributes);
   return thread;
 }
 
@@ -714,6 +725,34 @@ static void test_close_frees_pending_timers_and_rejections(void) {
              NULL);
 }
 
+// Runs each JS test file (test/js) after harness.js, in a new engine. Fails
+// on the first log line, such as the report of a failed test, and when a file
+// runs no test.
+static void test_js_files(void) {
+  for (int i = 1; i < p2pml_test_scripts_count; i++) {
+    p2pml_engine *engine = p2pml_engine_new();
+    CHECK(engine != NULL);
+    eval_task harness = {.code = (const char *)p2pml_test_scripts[0].source};
+    eval_task tests = {.code = (const char *)p2pml_test_scripts[i].source};
+    eval_task count = {.code = "testsRun"};
+    post_eval(engine, &harness);
+    post_eval(engine, &tests);
+    post_eval(engine, &count);
+    post_close(engine);
+    stop(engine, start(engine));
+    if (!harness.ok) {
+      fprintf(stderr, "harness.js threw: %s\n", harness.result.error);
+    }
+    if (!tests.ok) {
+      fprintf(stderr, "%s threw: %s\n", p2pml_test_scripts[i].name, tests.result.error);
+    }
+    CHECK(harness.ok && tests.ok && count.ok && atoi(count.result.value) > 0);
+    p2pml_eval_result_free(&harness.result);
+    p2pml_eval_result_free(&tests.result);
+    p2pml_eval_result_free(&count.result);
+  }
+}
+
 int main(void) {
   test_close_without_tasks();
   test_tasks_run_in_order();
@@ -747,6 +786,7 @@ int main(void) {
   test_console_stops_js_after_close();
   test_no_timer_starts_after_close();
   test_close_frees_pending_timers_and_rejections();
+  test_js_files();
   puts("engine tests passed");
   return 0;
 }

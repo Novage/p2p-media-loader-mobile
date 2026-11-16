@@ -18,7 +18,9 @@ class JsEngineDeviceTest {
                 engine.post {
                     runCatching {
                             engine.evaluateScript(
-                                "setTimeout(() => console.log('$marker'), 1); 6 * 7",
+                                "setTimeout(() => console.log('$marker'), 1);" +
+                                    // The polyfills of the Android build; a number result.
+                                    "new TextDecoder().decode(new TextEncoder().encode('6')) * 7",
                                 "device.js",
                             )
                         }
