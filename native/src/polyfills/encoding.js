@@ -13,15 +13,6 @@
   ]);
   const OUTER_ASCII_WHITESPACE = /^[\t\n\f\r ]+|[\t\n\f\r ]+$/g;
 
-  // A WebIDL dictionary: undefined and null give the defaults.
-  const dictionary = (value) => {
-    if (value === undefined || value === null) return {};
-    if (typeof value !== "object" && typeof value !== "function") {
-      throw new TypeError("The options are not an object");
-    }
-    return value;
-  };
-
   class TextEncoder {
     get encoding() {
       return "utf-8";
@@ -52,7 +43,7 @@
         );
       }
       // WebIDL reads the members in this order.
-      const { fatal, ignoreBOM } = dictionary(options);
+      const { fatal, ignoreBOM } = natives.dictionary(options);
       this.#fatal = Boolean(fatal);
       this.#ignoreBOM = Boolean(ignoreBOM);
     }
@@ -72,7 +63,7 @@
     decode(input = undefined, options = undefined) {
       const fatal = this.#fatal;
       const ignoreBOM = this.#ignoreBOM;
-      if (dictionary(options).stream) {
+      if (natives.dictionary(options).stream) {
         throw new TypeError(
           "TextDecoder.prototype.decode with {stream: true} is not supported",
         );
@@ -92,17 +83,5 @@
     }
   }
 
-  // As a browser has them: a toStringTag, and globals that are writable,
-  // configurable and not enumerable.
-  for (const type of [TextEncoder, TextDecoder]) {
-    Object.defineProperty(type.prototype, Symbol.toStringTag, {
-      value: type.name,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, type.name, {
-      value: type,
-      writable: true,
-      configurable: true,
-    });
-  }
+  natives.expose(TextEncoder, TextDecoder);
 };

@@ -26,6 +26,7 @@ globalThis.assertEquals = (actual, expected, what = "value") => {
   }
 };
 
+// Returns the error, for more checks.
 globalThis.assertThrows = (type, body, what = "call") => {
   try {
     body();
@@ -33,7 +34,7 @@ globalThis.assertThrows = (type, body, what = "call") => {
     if (!(error instanceof type)) {
       throw new Error(`${what}: expected a ${type.name}, got ${show(error)}`);
     }
-    return;
+    return error;
   }
   throw new Error(`${what}: expected a ${type.name}, nothing thrown`);
 };

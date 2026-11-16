@@ -7,13 +7,13 @@ the rules for the code that calls it.
 
 ## Where the code is
 
-| Part                                   | Code                                                     |
-| -------------------------------------- | -------------------------------------------------------- |
-| QuickJS, Bellard's release as released | `native/third_party/quickjs/` (version in its README.md) |
-| The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`             |
-| The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`     |
-| The JNI glue, nothing else             | `native/src/jni.c`                                       |
-| The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`           |
+| Part                                   | Code                                                                        |
+| -------------------------------------- | --------------------------------------------------------------------------- |
+| QuickJS, Bellard's release as released | `native/third_party/quickjs/` (version in its README.md)                    |
+| The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`                                |
+| The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c` |
+| The JNI glue, nothing else             | `native/src/jni.c`                                                          |
+| The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`                              |
 
 The engine is plain C, so that iOS calls the same code through cinterop, and
 native libraries such as libdatachannel call it with no JNI. The C code and
@@ -86,6 +86,19 @@ does not have. They are in C or in the built-in JS polyfills (see
   `ignoreBOM`. A label of another encoding throws a `RangeError`, as an
   unknown label does. `decode` with `{stream: true}` and `encodeInto` throw a
   `TypeError`: the core does not use them.
+- **`DOMException`** of WebIDL: an `Error`, with `name`, `message`, the
+  legacy `code` and the legacy constants.
+- **`Event` and `EventTarget`** of the DOM Standard. An `EventTarget` has no
+  parent, so an event is dispatched at its target only: capture listeners
+  first, then the others, in the order added; there is no capture or bubble
+  path. `addEventListener` takes the options `capture`, `once`, `passive` and
+  `signal`, and a function or an object with `handleEvent`. The legacy
+  members of `Event` (`srcElement`, `returnValue`, `cancelBubble`,
+  `initEvent`) are absent.
+- **`AbortController` and `AbortSignal`**: `abort(reason)`, `aborted`,
+  `reason`, `throwIfAborted`, `onabort` and `AbortSignal.abort`. The default
+  reason is a `DOMException` named `AbortError`. `AbortSignal.timeout` and
+  `AbortSignal.any` are absent: the core does not use them.
 
 ## Polyfills
 
@@ -97,6 +110,12 @@ each file in the order the build lists them. A file is one function
 expression, `(natives) => { … }`, which the engine calls with an object of
 C helpers; the helpers do not become globals. If a polyfill fails, the
 engine does not start, as when the runtime cannot be created.
+
+A polyfill can also put helpers on that object for the polyfills after it:
+`webidl.js` gives the conversion of options, interface constants and the
+way a class becomes a global; `events.js` gives `on…` handler properties,
+the dispatch of a trusted event, and abort steps that run before a signal's
+`abort` event, for the shims of `fetch`, `WebSocket` and WebRTC.
 
 ## Closing
 
@@ -124,10 +143,10 @@ Closing again does nothing.
 
 - A JS exception from a script that Kotlin evaluates throws `JsException`,
   with the exception converted to a string as its message, and its `stack`.
-- An exception that JS does not catch, from a timer's callback or from a
-  Promise job (a FinalizationRegistry callback), goes to the log as an
-  error: `Uncaught `, then the exception as `console` writes it. The loop
-  continues.
+- An exception that JS does not catch, from a timer's callback, an event
+  listener or a Promise job (a FinalizationRegistry callback), goes to the
+  log as an error: `Uncaught `, then the exception as `console` writes it.
+  The loop continues.
 - A Promise that is rejected with no handler goes to the log as an error:
   `Uncaught (in promise) `, then the reason. It is written after the Promise
   jobs of its task or timer have run, and only if no handler was added by

@@ -76,8 +76,9 @@ function(embed_js output list)
 endfunction()
 
 # The JS polyfills, in the order the engine evaluates them.
-embed_js(${CMAKE_BINARY_DIR}/polyfills.c p2pml_polyfills
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/polyfills/encoding.js)
+set(POLYFILLS webidl.js dom_exception.js events.js encoding.js)
+list(TRANSFORM POLYFILLS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/src/polyfills/)
+embed_js(${CMAKE_BINARY_DIR}/polyfills.c p2pml_polyfills ${POLYFILLS})
 set(ENGINE_SOURCES src/engine.c src/encoding.c ${CMAKE_BINARY_DIR}/polyfills.c)
 
 add_quickjs(quickjs)

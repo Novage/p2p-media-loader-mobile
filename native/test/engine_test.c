@@ -725,6 +725,30 @@ static void test_close_frees_pending_timers_and_rejections(void) {
              NULL);
 }
 
+static void test_an_exception_from_a_listener_is_reported(void) {
+  captured_log log = {0};
+  run_script(
+      "const target = new EventTarget();"
+      "target.addEventListener('x', function broken() { throw new Error('in a listener'); });"
+      "target.addEventListener('x', () => console.log('next'));"
+      "target.dispatchEvent(new Event('x'));"
+      "const controller = new AbortController();"
+      "controller.signal.onabort = () => { throw new TypeError('in onabort'); };"
+      "controller.signal.addEventListener('abort', () => console.log('after onabort'));"
+      "controller.abort();"
+      "closeEngine();"
+      // After the close: not reported.
+      "target.dispatchEvent(new Event('x'));",
+      &log);
+  CHECK(log.count == 4);
+  check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught Error: in a listener\n    at broken (test.js:1",
+             false);
+  check_line(&log, 1, P2PML_LOG_INFO, "next", true);
+  check_line(&log, 2, P2PML_LOG_ERROR, "Uncaught TypeError: in onabort", false);
+  check_line(&log, 3, P2PML_LOG_INFO, "after onabort", true);
+  free_log(&log);
+}
+
 // Runs each JS test file (test/js) after harness.js, in a new engine. Fails
 // on the first log line, such as the report of a failed test, and when a file
 // runs no test.
@@ -786,6 +810,7 @@ int main(void) {
   test_console_stops_js_after_close();
   test_no_timer_starts_after_close();
   test_close_frees_pending_timers_and_rejections();
+  test_an_exception_from_a_listener_is_reported();
   test_js_files();
   puts("engine tests passed");
   return 0;

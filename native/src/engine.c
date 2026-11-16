@@ -502,13 +502,30 @@ static const JSCFunctionListEntry global_functions[] = {
     JS_OBJECT_DEF("performance", performance_functions, COUNT(performance_functions), GLOBAL),
 };
 
+// natives.reportError(value): writes the value as an uncaught error, as the
+// engine's own reports (report()). Values as setTimeout's.
+static JSValue report_error(JSContext *context, JSValueConst this_value, int argc,
+                            JSValueConst *argv) {
+  (void)this_value;
+  (void)argc;
+  report(JS_GetContextOpaque(context), "Uncaught ", argv[0]);
+  return JS_UNDEFINED;
+}
+
+static const JSCFunctionListEntry native_functions[] = {
+    JS_CFUNC_DEF("reportError", 1, report_error),
+};
+
 // Evaluates each polyfill (src/polyfills/*.js), a function expression, and
 // calls it with the natives: the C helpers that the polyfills use, which do
 // not become globals. False when one fails; its error goes to the log.
 static bool add_polyfills(p2pml_engine *engine) {
   JSContext *context = engine->context;
   JSValue natives = JS_NewObject(context);
-  bool added = !JS_IsException(natives) && p2pml_add_encoding(context, natives);
+  bool added = !JS_IsException(natives) &&
+               JS_SetPropertyFunctionList(context, natives, native_functions,
+                                          COUNT(native_functions)) == 0 &&
+               p2pml_add_encoding(context, natives);
   for (int i = 0; added && i < p2pml_polyfills_count; i++) {
     const p2pml_script *script = &p2pml_polyfills[i];
     const char *source = (const char *)script->source;
