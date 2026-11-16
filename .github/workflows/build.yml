@@ -35,7 +35,9 @@ jobs:
         run: |
           version() { sed -n "s/^$1 = \"\(.*\)\"$/\1/p" gradle/libs.versions.toml; }
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
-            "ndk;$(version ndk)" "cmake;$(version cmake)" > /dev/null
+            "ndk;$(version ndk)" "cmake;$(version cmake)"
+          # The version that `clang-format` in the catalog must name.
+          "$ANDROID_HOME/ndk/$(version ndk)/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-format" --version
 
       - uses: gradle/actions/setup-gradle@v6
         with:

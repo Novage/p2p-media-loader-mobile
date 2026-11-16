@@ -12,10 +12,10 @@ ktfmt = "0.64"
 # The first detekt built on the Kotlin 2.4 compiler, which type resolution needs.
 detekt = "2.0.0-alpha.6"
 # The NDK and CMake that build native/ (Android Studio's SDK Manager installs
-# them). This NDK is r28 beta 2: see KNOWN-ISSUES.md.
-ndk = "28.0.12674087"
+# them). This NDK is r30.
+ndk = "30.0.16248370"
 # The clang-format of that NDK. Spotless stops when the two do not agree.
-clang-format = "19.0.0"
+clang-format = "21.0.0"
 cmake = "3.31.0"
 androidx-test-runner = "1.7.0"
 
