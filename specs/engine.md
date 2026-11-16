@@ -86,6 +86,9 @@ does not have. They are in C or in the built-in JS polyfills (see
   `ignoreBOM`. A label of another encoding throws a `RangeError`, as an
   unknown label does. `decode` with `{stream: true}` and `encodeInto` throw a
   `TypeError`: the core does not use them.
+- **`btoa` and `atob`** of the HTML Standard: `atob` is the forgiving base64
+  decode. A code unit above U+00FF (`btoa`) or input that is not base64
+  (`atob`) throws a `DOMException` named `InvalidCharacterError`.
 - **`DOMException`** of WebIDL: an `Error`, with `name`, `message`, the
   legacy `code` and the legacy constants.
 - **`Event` and `EventTarget`** of the DOM Standard. An `EventTarget` has no
@@ -103,13 +106,15 @@ does not have. They are in C or in the built-in JS polyfills (see
 ## Polyfills
 
 A global that is mostly API surface is written in JS, with its byte work in
-C. The JS files are in `native/src/polyfills/`; the build turns each into a
-C array (`embed_js` in `native/CMakeLists.txt`), so they are part of
-`libp2pml.so`. When the engine starts, after the globals in C, it evaluates
-each file in the order the build lists them. A file is one function
-expression, `(natives) => { … }`, which the engine calls with an object of
-C helpers; the helpers do not become globals. If a polyfill fails, the
-engine does not start, as when the runtime cannot be created.
+C. The base64 byte work of `btoa` and `atob` is QuickJS's own: the
+`Uint8Array` base64 functions, with `fromBase64` in its "loose" mode, which
+is the forgiving decode. The JS files are in `native/src/polyfills/`; the
+build turns each into a C array (`embed_js` in `native/CMakeLists.txt`), so
+they are part of `libp2pml.so`. When the engine starts, after the globals in
+C, it evaluates each file in the order the build lists them. A file is one
+function expression, `(natives) => { … }`, which the engine calls with an
+object of C helpers; the helpers do not become globals. If a polyfill fails,
+the engine does not start, as when the runtime cannot be created.
 
 A polyfill can also put helpers on that object for the polyfills after it:
 `webidl.js` gives the conversion of options, interface constants and the
