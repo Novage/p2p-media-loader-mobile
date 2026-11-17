@@ -1,6 +1,6 @@
 // The HTTP requests of fetch (src/polyfills/fetch.js): the platform's HTTP
 // client does the network work; the engine gives its results to JS. See
-// specs/engine.md, "The platform's HTTP client".
+// specs/engine.md, "The platform's network clients".
 
 #ifndef P2PML_HTTP_H
 #define P2PML_HTTP_H
@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "channel.h"
 #include "engine.h"
 #include "quickjs.h"
 
@@ -46,6 +47,8 @@ typedef struct p2pml_http p2pml_http;
 p2pml_http *p2pml_http_new(const p2pml_http_client *client);
 // The engine's state (engine.c).
 p2pml_http *p2pml_engine_http(p2pml_engine *engine);
+// The channel of the requests.
+p2pml_channel *p2pml_http_channel(p2pml_http *http);
 // Adds httpStart, httpCancel and httpListen to `natives`, which stays the
 // caller's. False when out of memory.
 bool p2pml_http_add(JSContext *context, JSValueConst natives);

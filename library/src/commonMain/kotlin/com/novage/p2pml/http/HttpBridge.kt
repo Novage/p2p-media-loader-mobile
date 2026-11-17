@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
  * response, any data, then an end; or a failure at any point. Each returns whether the engine took
  * the event: false once it is closed, or when it cannot copy the event. (A failed JNI allocation
  * throws an OutOfMemoryError instead, which ends the thread, as any Error.) See specs/engine.md,
- * "The platform's HTTP client".
+ * "The platform's network clients".
  */
 internal interface HttpEvents {
     /** [headers] are names and values, in turn. */

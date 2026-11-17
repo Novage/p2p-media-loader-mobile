@@ -71,6 +71,8 @@ struct p2pml_engine {
   rejection *rejections;
   // The requests of fetch: engine thread only, while the runtime exists.
   p2pml_http *http;
+  // The channels of `http` and others, borrowed: as `http`.
+  p2pml_channel *channels[P2PML_CHANNEL_COUNT];
   // navigator.userAgent, UTF-8.
   char user_agent[];
 };
@@ -604,6 +606,9 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   engine->log_data = log_data;
   engine->started = now();
   engine->http = p2pml_http_new(http);
+  if (engine->http != NULL) {
+    engine->channels[P2PML_CHANNEL_HTTP] = p2pml_http_channel(engine->http);
+  }
   // Created on this thread, which QuickJS takes as the top of its stack.
   engine->runtime = engine->http != NULL ? JS_NewRuntime() : NULL;
   if (engine->runtime != NULL) {
@@ -641,6 +646,7 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   // Cancels the requests that are still open.
   p2pml_http_free(engine->http, engine->context);
   engine->http = NULL;
+  engine->channels[P2PML_CHANNEL_HTTP] = NULL;
   if (engine->context != NULL) {
     JS_FreeContext(engine->context);
     engine->context = NULL;
@@ -693,6 +699,10 @@ void p2pml_engine_free(p2pml_engine *engine) {
 JSContext *p2pml_engine_context(p2pml_engine *engine) { return engine->context; }
 
 p2pml_http *p2pml_engine_http(p2pml_engine *engine) { return engine->http; }
+
+p2pml_channel *p2pml_engine_channel(p2pml_engine *engine, p2pml_channel_id which) {
+  return engine->channels[which];
+}
 
 static bool eval_script(JSContext *context, const char *code, size_t length, const char *file_name,
                         p2pml_eval_result *result) {

@@ -7,7 +7,7 @@ import okhttp3.Dispatcher
 
 /**
  * The HTTP client of every engine's `fetch`: one per process, so that the engines share its
- * connections. See specs/engine.md, "The platform's HTTP client".
+ * connections. See specs/engine.md, "The platform's network clients".
  */
 internal object SharedHttpClient {
     // Up to 6 requests at once to one host, as a browser; OkHttp counts a request until its

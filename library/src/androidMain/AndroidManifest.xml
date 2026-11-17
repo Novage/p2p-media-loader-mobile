@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- fetch downloads segments and playlists (specs/engine.md, "The platform's HTTP client"). -->
+    <!-- fetch downloads segments and playlists (specs/engine.md, "The platform's network clients"). -->
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

@@ -50,7 +50,7 @@ that describes the behaviour, not here.
   or a cache key that uses it, can then fail where a browser succeeds. A fix
   that sent the exact URL through an OkHttp interceptor needed OkHttp to
   follow the redirects, which blocked those from http to https; it was
-  removed. See specs/engine.md, "The platform's HTTP client".
+  removed. See specs/engine.md, "The platform's network clients".
 - **Some request headers make a fetch fail.** OkHttp refuses a header value
   with a character above U+007F, which `Headers` accepts up to U+00FF, and
   Ktor refuses the headers that it sets itself: `Content-Length`,

@@ -18,7 +18,7 @@ ndk = "30.0.16248370"
 clang-format = "21.0.0"
 cmake = "3.31.0"
 androidx-test-runner = "1.7.0"
-# fetch's HTTP client (specs/engine.md, "The platform's HTTP client"): Ktor in
+# fetch's HTTP client (specs/engine.md, "The platform's network clients"): Ktor in
 # common code, with its OkHttp engine on Android.
 ktor = "3.6.1"
 kotlinx-coroutines = "1.11.0"

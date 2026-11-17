@@ -14,6 +14,7 @@ the rules for the code that calls it.
 | The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c` |
 | URL parsing: Ada (C++), and its C glue | `native/third_party/ada/` (version in its README.md), `native/src/url.c`    |
 | The web core's bundle, as a module     | `native/package.json` (the npm package), `native/src/modules.c`             |
+| The channels of the network's items    | `native/src/channel.h`, `native/src/channel.c`                              |
 | fetch: the requests, and their events  | `native/src/http.h`, `native/src/http.c`, `native/src/polyfills/fetch.js`   |
 | fetch's HTTP client, over Ktor         | `library/src/commonMain/…/http/HttpBridge.kt`                               |
 | The JNI glue, nothing else             | `native/src/jni.c`                                                          |
@@ -127,7 +128,7 @@ does not have. They are in C or in the built-in JS polyfills (see
 - **`fetch`, `Headers`, `Request` and `Response`** of the Fetch Standard, for
   what the core does: a GET or HEAD with headers, a streamed body, and an
   abort. The platform's HTTP client does the network work (see "The
-  platform's HTTP client").
+  platform's network clients").
   - `Headers`: names are case-insensitive, values are joined with `, `, and
     iteration is sorted by name. A name that is not an HTTP token, or a value
     with NUL, CR, LF or a code point above U+00FF, throws a `TypeError`. A
@@ -176,15 +177,23 @@ class or an operation becomes a global; `events.js` gives `on…` handler proper
 the dispatch of a trusted event, and abort steps that run before a signal's
 `abort` event, for the shims of `fetch`, `WebSocket` and WebRTC.
 
-## The platform's HTTP client
+## The platform's network clients
 
-`fetch`'s network work is the platform's. The engine calls the platform's
-client (`p2pml_http_client` in `native/src/http.h`) on the engine thread, to
-start a request (method, URL and headers) and to cancel one. The platform
-then gives the request's events from any thread: a response (status, status
-text, URL after redirects, headers), any data, then an end; or a failure at
-any point. Each event is copied into a task, so JS gets it on the engine
-thread, after the tasks before it.
+The network work is the platform's. The engine keeps the items that it runs
+for JS in channels (`native/src/channel.c`): an id for each item, the open
+ones, one JS listener, and the item's events, which the platform posts from
+any thread and the engine gives to JS in tasks. When JS cannot take an event
+that it needs (out of memory, or a defect of the polyfill), the channel stops
+the item and gives JS a failure in its place, if JS can take that (if JS's
+own memory is out too, the item waits until the core's own timeout). At the
+close, it stops each open item.
+
+For `fetch`, the engine calls the platform's client (`p2pml_http_client` in
+`native/src/http.h`) on the engine thread, to start a request (method, URL and
+headers) and to cancel one. The platform then gives the request's events from
+any thread: a response (status, status text, URL after redirects, headers),
+any data, then an end; or a failure at any point. Each event is copied into a
+task, so JS gets it on the engine thread, after the tasks before it.
 
 - **The bytes** are copied once, from the platform's buffer into memory that
   the JS `ArrayBuffer` of the chunk then owns.
@@ -192,8 +201,7 @@ thread, after the tasks before it.
   the chunks wait in the queue of tasks while JS is busy. A segment bounds
   them: a few MB.
 - **Cancel:** after the engine cancels a request (an abort, a cancel of the
-  body, or the close), no event of it reaches JS; a late one is dropped. At
-  the close, the engine cancels each request that is still open.
+  body, or the close), no event of it reaches JS; a late one is dropped.
 - **Android and iOS:** the client is `HttpBridge`, over Ktor, in common
   Kotlin code: a coroutine per request, which reads the body in chunks of up
   to 64 KiB. On Android, Ktor's OkHttp engine; one Ktor client per process.

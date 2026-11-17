@@ -119,7 +119,7 @@ Then:
 ## Ktor, kotlinx-coroutines and OkHttp
 
 `fetch` runs over Ktor in common code, with Ktor's OkHttp engine on Android
-(specs/engine.md, "The platform's HTTP client"). Update them as one group.
+(specs/engine.md, "The platform's network clients"). Update them as one group.
 
 1. Ktor: read the release notes of each version skipped, for the client API
    that `HttpBridge.kt` uses (`prepareRequest`, `execute`, `bodyAsChannel`,

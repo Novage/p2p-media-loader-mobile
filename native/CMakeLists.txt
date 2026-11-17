@@ -90,7 +90,7 @@ if(NOT EXISTS ${CORE_BUNDLE})
 endif()
 embed_js(${CMAKE_BINARY_DIR}/core_bundle.c p2pml_core_bundle ${CORE_BUNDLE})
 
-set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c src/http.c
+set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c src/channel.c src/http.c
   ${CMAKE_BINARY_DIR}/polyfills.c ${CMAKE_BINARY_DIR}/core_bundle.c)
 
 # Ada as released (third_party/ada): C++20, without exceptions, RTTI and
