@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include "encoding.h"
+#include "http.h"
 #include "modules.h"
 #include "polyfills.h"
 #include "url.h"
@@ -68,6 +69,8 @@ struct p2pml_engine {
   // The nesting of the timer that runs, or 0.
   int timer_nesting;
   rejection *rejections;
+  // The requests of fetch: engine thread only, while the runtime exists.
+  p2pml_http *http;
   // navigator.userAgent, UTF-8.
   char user_agent[];
 };
@@ -267,7 +270,7 @@ static void report(p2pml_engine *engine, const char *prefix, JSValueConst value)
 }
 
 // Writes and clears the current exception, as report() does.
-static void report_exception(p2pml_engine *engine) {
+void p2pml_engine_report_exception(p2pml_engine *engine) {
   JSValue exception = JS_GetException(engine->context);
   report(engine, "Uncaught ", exception);
   JS_FreeValue(engine->context, exception);
@@ -327,7 +330,7 @@ static void run_jobs(p2pml_engine *engine) {
     if (ran < 0) {
       // A FinalizationRegistry callback threw, or QuickJS failed, such as out
       // of memory. A Promise reaction turns an exception into a rejection.
-      report_exception(engine);
+      p2pml_engine_report_exception(engine);
     }
   }
 }
@@ -367,7 +370,7 @@ static void run_due_timer(p2pml_engine *engine) {
       JS_Call(engine->context, due->callback, global, due->argc, (JSValueConst *)due->argv);
   JS_FreeValue(engine->context, global);
   if (JS_IsException(result)) {
-    report_exception(engine);
+    p2pml_engine_report_exception(engine);
   }
   JS_FreeValue(engine->context, result);
   free_timer(engine->context, due);
@@ -531,7 +534,8 @@ static bool add_polyfills(p2pml_engine *engine) {
   bool added = !JS_IsException(natives) &&
                JS_SetPropertyFunctionList(context, natives, native_functions,
                                           COUNT(native_functions)) == 0 &&
-               p2pml_add_encoding(context, natives) && p2pml_add_url(context, natives);
+               p2pml_add_encoding(context, natives) && p2pml_add_url(context, natives) &&
+               p2pml_http_add(context, natives);
   for (int i = 0; added && i < p2pml_polyfills_count; i++) {
     const p2pml_script *script = &p2pml_polyfills[i];
     const char *source = (const char *)script->source;
@@ -546,7 +550,7 @@ static bool add_polyfills(p2pml_engine *engine) {
     JS_FreeValue(context, install);
   }
   if (!added) {
-    report_exception(engine);
+    p2pml_engine_report_exception(engine);
   }
   JS_FreeValue(context, natives);
   return added;
@@ -594,12 +598,14 @@ static int interrupt_if_closed(JSRuntime *runtime, void *opaque) {
   return atomic_load(&engine->closed);
 }
 
-bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data) {
+bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data,
+                      const p2pml_http_client *http) {
   engine->log = log;
   engine->log_data = log_data;
   engine->started = now();
+  engine->http = p2pml_http_new(http);
   // Created on this thread, which QuickJS takes as the top of its stack.
-  engine->runtime = JS_NewRuntime();
+  engine->runtime = engine->http != NULL ? JS_NewRuntime() : NULL;
   if (engine->runtime != NULL) {
     JS_SetInterruptHandler(engine->runtime, interrupt_if_closed, engine);
     JS_SetHostPromiseRejectionTracker(engine->runtime, track_rejection, engine);
@@ -632,6 +638,9 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
     engine->timers = pending->next;
     free_timer(engine->context, pending);
   }
+  // Cancels the requests that are still open.
+  p2pml_http_free(engine->http, engine->context);
+  engine->http = NULL;
   if (engine->context != NULL) {
     JS_FreeContext(engine->context);
     engine->context = NULL;
@@ -682,6 +691,8 @@ void p2pml_engine_free(p2pml_engine *engine) {
 }
 
 JSContext *p2pml_engine_context(p2pml_engine *engine) { return engine->context; }
+
+p2pml_http *p2pml_engine_http(p2pml_engine *engine) { return engine->http; }
 
 static bool eval_script(JSContext *context, const char *code, size_t length, const char *file_name,
                         p2pml_eval_result *result) {

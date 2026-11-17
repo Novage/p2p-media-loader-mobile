@@ -42,3 +42,19 @@ that describes the behaviour, not here.
   `org.gradle.warning.mode=fail` would fail the build, and Gradle prints a
   summary of deprecations instead. Set the mode to `fail` in
   `gradle.properties` once releases of both stop the call.
+- **Ktor can change a request's URL.** `fetch` gives Ktor the URL as the
+  WHATWG parser writes it, and Ktor parses it again before OkHttp sends it: a
+  repeated query name is regrouped (`?a=1&b=2&a=3` goes out as
+  `?a=1&a=3&b=2`), an empty pair is dropped (`?x=1&&y=2`, `?=x&k`), and OkHttp
+  encodes `|` and `^` in a path. A URL that a CDN signed over its exact text,
+  or a cache key that uses it, can then fail where a browser succeeds. A fix
+  that sent the exact URL through an OkHttp interceptor needed OkHttp to
+  follow the redirects, which blocked those from http to https; it was
+  removed. See specs/engine.md, "The platform's HTTP client".
+- **Some request headers make a fetch fail.** OkHttp refuses a header value
+  with a character above U+007F, which `Headers` accepts up to U+00FF, and
+  Ktor refuses the headers that it sets itself: `Content-Length`,
+  `Content-Type`, `Transfer-Encoding` and `Upgrade`. The request then fails as
+  a network error, where a browser sends the Latin-1 value and drops or keeps
+  the header. The core sends only `Range`; only an app's `httpRequestSetup`
+  can add such a header.

@@ -64,7 +64,18 @@ A record of globals cannot see everything a shim must give:
   an aborted `AbortSignal` must cancel the native request.
 - **Paths the run did not take.** `DOMException` is thrown when a request is
   aborted, and `atob` decodes a `data:` URI in the HLS parser. Both belong in
-  the polyfills.
+  the polyfills. Step 2.3a found one more: when `new WebSocket` throws (no
+  `WebSocket`, or an invalid tracker URL), the core makes an `ErrorEvent`,
+  which Node has; it is a polyfill too.
+
+The network was decided in step 2.3a: `fetch` over Ktor, in common Kotlin
+code, so that iOS uses the same code with Ktor's Darwin engine; on Android,
+Ktor's OkHttp engine, which has HTTP/2 and the WebSocket of step 2.3b. The
+`User-Agent` header is `navigator.userAgent`. OkHttp 5 needs apps to compile
+against Android API 37. With R8, Ktor and its dependencies add 0.42 MB to the
+sample app (5.56 MB to 5.98 MB). On the OnePlus 7, a 20 MB body went through
+`fetch` at 34 to 40 MiB/s in the device test's debug build (three runs),
+about 50 times the bitrate of 1080p.
 
 Not needed: `queueMicrotask`, because the core has its own function of that
 name, and `RTCIceCandidate`, because the core sends the whole SDP through the

@@ -1,15 +1,21 @@
 package com.novage.p2pml.engine
 
+import com.novage.p2pml.http.HttpBridge
+import com.novage.p2pml.http.HttpEvents
+import com.novage.p2pml.http.SharedHttpClient
 import java.util.concurrent.TimeUnit
 
 /**
  * A QuickJS engine on a thread of its own, which runs posted tasks and JS timers one at a time.
  * Only the engine thread touches the JS runtime: tasks call [evaluateScript]. JS gets [userAgent]
- * as `navigator.userAgent`, such as [libraryUserAgent]. Console lines and uncaught JS errors go to
- * [log]. See specs/engine.md.
+ * as `navigator.userAgent`, such as [libraryUserAgent], and `fetch` over [SharedHttpClient].
+ * Console lines and uncaught JS errors go to [log]. See specs/engine.md.
  */
 internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat) {
     private val lock = Any()
+    // The requests of fetch. Before the thread starts: the engine thread uses it.
+    private val http =
+        HttpBridge({ SharedHttpClient.client }, Delivery(), onEngine = { block -> post(block) })
     // Before the native engine, so that a failure here leaves nothing to free.
     private val thread = Thread(null, ::runEngine, "p2pml-engine", STACK_SIZE)
     // Zero once the engine thread has freed the engine. Set by the constructor, then changes only
@@ -58,11 +64,7 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
      * the runtime and the pending timers, drops the pending tasks, and ends. Closing again does
      * nothing.
      */
-    fun close() {
-        synchronized(lock) {
-            if (handle != 0L) NativeEngine.close(handle)
-        }
-    }
+    fun close() = withHandle(Unit) { NativeEngine.close(it) }
 
     /** Waits until the engine thread has freed the engine and ended. For tests. */
     internal fun awaitClosed(timeout: Long, unit: TimeUnit): Boolean {
@@ -75,15 +77,54 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
             val sink = NativeEngine.LogSink { level, message ->
                 log.write(JsLog.Level.entries[level], message)
             }
-            if (!NativeEngine.run(handle, sink)) {
+            val httpSink =
+                object : NativeEngine.HttpSink {
+                    override fun start(
+                        id: Int,
+                        method: String,
+                        url: String,
+                        headers: Array<String>,
+                    ) = http.start(id, method, url, headers.asList())
+
+                    override fun cancel(id: Int) = http.cancel(id)
+                }
+            if (!NativeEngine.run(handle, sink, httpSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")
             }
         } finally {
+            http.close()
             synchronized(lock) {
                 NativeEngine.free(handle)
                 handle = 0
             }
         }
+    }
+
+    // Under [lock] and only while [handle] is not 0, so that a call from another thread never
+    // reaches a freed engine.
+    private inline fun <T> withHandle(otherwise: T, call: (Long) -> T): T =
+        synchronized(lock) { if (handle != 0L) call(handle) else otherwise }
+
+    /** Gives the events of fetch's requests to the native engine, from Ktor's threads. */
+    private inner class Delivery : HttpEvents {
+        override fun response(
+            id: Int,
+            status: Int,
+            statusText: String,
+            url: String,
+            headers: List<String>,
+        ) =
+            withHandle(false) {
+                NativeEngine.httpResponse(it, id, status, statusText, url, headers.toTypedArray())
+            }
+
+        override fun data(id: Int, bytes: ByteArray, length: Int) =
+            withHandle(false) { NativeEngine.httpData(it, id, bytes, length) }
+
+        override fun end(id: Int) = withHandle(false) { NativeEngine.httpEnd(it, id) }
+
+        override fun fail(id: Int, message: String) =
+            withHandle(false) { NativeEngine.httpFail(it, id, message) }
     }
 
     // An exception from a task is a defect of the library: report it and let the next task run,

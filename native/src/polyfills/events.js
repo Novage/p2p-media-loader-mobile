@@ -115,6 +115,54 @@
     }
   }
 
+  // ErrorEvent of the HTML Standard. The core makes one when a WebSocket
+  // cannot be created.
+  class ErrorEvent extends Event {
+    #message;
+    #filename;
+    #lineno;
+    #colno;
+    #error;
+
+    constructor(type, init = undefined) {
+      natives.requireArguments(arguments.length, 1, "ErrorEvent");
+      super(type, init);
+      // WebIDL gets and converts each member of a dictionary in turn, in the
+      // order of their names.
+      const options = natives.dictionary(init);
+      // An unsigned long: ToNumber, then modulo 2^32 (NaN and Infinity are 0).
+      const unsignedLong = (value) => (value === undefined ? 0 : +value >>> 0);
+      this.#colno = unsignedLong(options.colno);
+      this.#error = options.error;
+      const { filename } = options;
+      this.#filename =
+        filename === undefined ? "" : natives.usvString(filename);
+      this.#lineno = unsignedLong(options.lineno);
+      const { message } = options;
+      this.#message = message === undefined ? "" : `${message}`;
+    }
+
+    get message() {
+      return this.#message;
+    }
+
+    get filename() {
+      return this.#filename;
+    }
+
+    get lineno() {
+      return this.#lineno;
+    }
+
+    get colno() {
+      return this.#colno;
+    }
+
+    get error() {
+      return this.#error;
+    }
+  }
+
   // addEventListener's options: a dictionary, or a boolean for capture. As
   // WebIDL's union, undefined and null are the dictionary (its defaults).
   const listenerOptions = (options) =>
@@ -370,5 +418,5 @@
 
   natives.defineEventHandler(AbortSignal.prototype, "abort");
   natives.defineConstants(Event, PHASES);
-  natives.expose(Event, EventTarget, AbortSignal, AbortController);
+  natives.expose(Event, ErrorEvent, EventTarget, AbortSignal, AbortController);
 };

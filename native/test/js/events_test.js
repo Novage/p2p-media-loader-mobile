@@ -449,6 +449,7 @@ test("what AbortSignal does not have", () => {
 test("the globals look as in a browser", () => {
   for (const name of [
     "Event",
+    "ErrorEvent",
     "EventTarget",
     "AbortController",
     "AbortSignal",
@@ -474,5 +475,64 @@ test("the globals look as in a browser", () => {
     TypeError,
     () => EventTarget.prototype.dispatchEvent.call({}, new Event("x")),
     "dispatch on another object",
+  );
+});
+
+test("ErrorEvent: its members, with their defaults", () => {
+  const empty = new ErrorEvent("error");
+  assertEquals(empty instanceof Event, true, "an Event");
+  assertEquals(
+    `${empty.message}|${empty.filename}|${empty.lineno}|${empty.colno}|${empty.error}`,
+    "||0|0|undefined",
+    "defaults",
+  );
+  const cause = new Error("cause");
+  const event = new ErrorEvent("error", {
+    message: "no socket",
+    filename: "a.js",
+    lineno: -1,
+    colno: 2.9,
+    error: cause,
+    cancelable: true,
+  });
+  assertEquals(event.message, "no socket", "message");
+  assertEquals(event.filename, "a.js", "filename");
+  assertEquals(event.lineno, 4294967295, "lineno, modulo 2^32");
+  assertEquals(event.colno, 2, "colno, truncated");
+  assertEquals(event.error, cause, "error");
+  assertEquals(event.cancelable, true, "the EventInit members");
+  assertThrows(TypeError, () => new ErrorEvent(), "no type");
+  assertThrows(
+    TypeError,
+    () => new ErrorEvent("e", { lineno: 1n }),
+    "a BigInt",
+  );
+});
+
+test("ErrorEvent: each member is read and converted in turn", () => {
+  const steps = [];
+  // A value whose conversion, to a number or a string, is recorded.
+  const recorded = (name) => {
+    const convert = () => {
+      steps.push(`convert ${name}`);
+      return 1;
+    };
+    return { valueOf: convert, toString: convert };
+  };
+  const init = {};
+  for (const name of ["colno", "error", "filename", "lineno", "message"]) {
+    Object.defineProperty(init, name, {
+      get() {
+        steps.push(`get ${name}`);
+        return recorded(name);
+      },
+    });
+  }
+  new ErrorEvent("error", init);
+  assertEquals(
+    steps.join(", "),
+    "get colno, convert colno, get error, get filename, convert filename, " +
+      "get lineno, convert lineno, get message, convert message",
+    "the order",
   );
 });

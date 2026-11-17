@@ -31,11 +31,13 @@ jobs:
           java-version: "17"
 
       # The versions come from the catalog, so a new pin needs no change here.
-      - name: Install the NDK and CMake
+      - name: Install the NDK, CMake and the compile SDK
         run: |
           version() { sed -n "s/^$1 = \"\(.*\)\"$/\1/p" gradle/libs.versions.toml; }
+          # From API 37 on, a platform has a minor version: android-37.0.
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
-            "ndk;$(version ndk)" "cmake;$(version cmake)"
+            "ndk;$(version ndk)" "cmake;$(version cmake)" \
+            "platforms;android-$(version android-compileSdk).0"
           # The version that `clang-format` in the catalog must name.
           "$ANDROID_HOME/ndk/$(version ndk)/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-format" --version
 

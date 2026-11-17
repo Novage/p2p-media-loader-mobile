@@ -30,27 +30,7 @@
     // A sequence of pairs, a record, or a string (with or without "?").
     constructor(init = "") {
       if (isObject(init)) {
-        if (typeof init[Symbol.iterator] === "function") {
-          for (const pair of init) {
-            if (!isObject(pair)) {
-              throw new TypeError("URLSearchParams: a pair is not a sequence");
-            }
-            const items = [...pair];
-            if (items.length !== 2) {
-              throw new TypeError("URLSearchParams: a pair must have 2 items");
-            }
-            this.#list.push([usv(items[0]), usv(items[1])]);
-          }
-        } else {
-          // WebIDL's record: a later key that converts to the same string
-          // takes the place of the earlier one's value.
-          const record = new Map();
-          for (const key of Reflect.ownKeys(init)) {
-            const property = Object.getOwnPropertyDescriptor(init, key);
-            if (property?.enumerable) record.set(usv(key), usv(init[key]));
-          }
-          this.#list = [...record];
-        }
+        this.#list = natives.pairsOf(init, "URLSearchParams", usv);
       } else {
         // searchParse drops a leading "?", as the standard's constructor.
         this.#list = natives.searchParse(usv(init));
@@ -274,11 +254,6 @@
     }
   }
 
-  // As WebIDL: the iterator of a pair iterable is its entries.
-  Object.defineProperty(URLSearchParams.prototype, Symbol.iterator, {
-    value: URLSearchParams.prototype.entries,
-    writable: true,
-    configurable: true,
-  });
+  natives.pairIterable(URLSearchParams);
   natives.expose(URL, URLSearchParams);
 };

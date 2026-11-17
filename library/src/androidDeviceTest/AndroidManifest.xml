@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The test APK only: JsFetchDeviceTest serves plain HTTP from the device itself. An app
+         decides about cleartext in its own network security config. -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

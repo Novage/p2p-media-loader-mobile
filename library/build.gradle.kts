@@ -50,11 +50,20 @@ kotlin {
     }
 
     sourceSets {
-        androidMain.dependencies { implementation(project(":native")) }
+        commonMain.dependencies {
+            implementation(libs.ktor.client.core)
+            implementation(libs.kotlinx.coroutines.core)
+        }
+        androidMain.dependencies {
+            implementation(project(":native"))
+            implementation(libs.ktor.client.okhttp)
+        }
         commonTest.dependencies { implementation(kotlin("test")) }
+        getByName("androidHostTest").dependencies { implementation(libs.okhttp.mockwebserver3) }
         getByName("androidDeviceTest").dependencies {
             implementation(kotlin("test"))
             implementation(libs.androidx.test.runner)
+            implementation(libs.okhttp.mockwebserver3)
         }
     }
 }

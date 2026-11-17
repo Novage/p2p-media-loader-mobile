@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "engine.h"
+#include "http.h"
 #include "polyfills.h"
 
 // test/js/*_test.js, which CMakeLists.txt builds in, and the setup scripts
@@ -68,9 +69,59 @@ typedef struct {
   captured_log *log;
 } run_args;
 
+// The fake HTTP client of every test engine (see add_test_globals): it
+// records each start in fakeHttp.started and each cancel in
+// fakeHttp.cancelled, and counts the cancels here.
+static atomic_int fake_cancels;
+
+// Calls fakeHttp[array].push(value); `value` is taken. Does nothing before
+// add_test_globals.
+static void push_to_fake(JSContext *context, const char *array, JSValue value) {
+  JSValue global = JS_GetGlobalObject(context);
+  JSValue fake = JS_GetPropertyStr(context, global, "fakeHttp");
+  // Without fakeHttp, a get from undefined would leave a TypeError pending.
+  JSValue list = JS_IsObject(fake) ? JS_GetPropertyStr(context, fake, array) : JS_UNDEFINED;
+  if (JS_IsArray(context, list)) {
+    JSValue length = JS_GetPropertyStr(context, list, "length");
+    uint32_t count = 0;
+    CHECK(JS_ToUint32(context, &count, length) == 0);
+    JS_FreeValue(context, length);
+    CHECK(JS_SetPropertyUint32(context, list, count, value) >= 0);
+  } else {
+    JS_FreeValue(context, value);
+  }
+  JS_FreeValue(context, list);
+  JS_FreeValue(context, fake);
+  JS_FreeValue(context, global);
+}
+
+static void fake_start(void *data, int32_t id, const char *method, const char *url,
+                       size_t header_count, const char *const *headers) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue request = JS_NewObject(context);
+  JSValue names = JS_NewObject(context);
+  for (size_t i = 0; i < header_count; i++) {
+    CHECK(JS_SetPropertyStr(context, names, headers[2 * i],
+                            JS_NewString(context, headers[2 * i + 1])) >= 0);
+  }
+  CHECK(JS_SetPropertyStr(context, request, "id", JS_NewInt32(context, id)) >= 0);
+  CHECK(JS_SetPropertyStr(context, request, "method", JS_NewString(context, method)) >= 0);
+  CHECK(JS_SetPropertyStr(context, request, "url", JS_NewString(context, url)) >= 0);
+  CHECK(JS_SetPropertyStr(context, request, "headers", names) >= 0);
+  push_to_fake(context, "started", request);
+}
+
+static void fake_cancel(void *data, int32_t id) {
+  atomic_fetch_add(&fake_cancels, 1);
+  push_to_fake(p2pml_engine_context(data), "cancelled",
+               JS_NewInt32(p2pml_engine_context(data), id));
+}
+
 static void *run_engine(void *data) {
   run_args *args = data;
-  CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log));
+  p2pml_http_client fake = {.start = fake_start, .cancel = fake_cancel, .data = args->engine};
+  CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log,
+                         &fake));
   free(args);
   return NULL;
 }
@@ -310,8 +361,70 @@ static JSValue run_gc(JSContext *context, JSValueConst this_value, int argc, JSV
   return JS_UNDEFINED;
 }
 
-// Gives the script a global mark() that sets `marked`, closeEngine() and
-// runGc().
+// The fake client's events, from JS, through the platform's functions:
+// fakeHttp.respond(id, status, statusText, url, [name, value, ...]),
+// fakeHttp.data(id, Uint8Array), fakeHttp.end(id) and fakeHttp.fail(id,
+// message). Each posts a task, as from a platform's thread, and returns
+// whether the engine took it. Values as mark().
+static JSValue fake_event(JSContext *context, JSValueConst this_value, int argc, JSValueConst *argv,
+                          int kind) {
+  (void)this_value;
+  (void)argc;
+  p2pml_engine *engine = JS_GetContextOpaque(context);
+  int32_t id = 0;
+  CHECK(JS_ToInt32(context, &id, argv[0]) == 0);
+  bool posted = false;
+  if (kind == 0) {
+    int32_t status = 0;
+    CHECK(JS_ToInt32(context, &status, argv[1]) == 0);
+    const char *text = JS_ToCString(context, argv[2]);
+    const char *url = JS_ToCString(context, argv[3]);
+    JSValue length = JS_GetPropertyStr(context, argv[4], "length");
+    uint32_t count = 0;
+    CHECK(text != NULL && url != NULL && JS_ToUint32(context, &count, length) == 0);
+    JS_FreeValue(context, length);
+    const char *headers[32];
+    CHECK(count <= 32);
+    for (uint32_t i = 0; i < count; i++) {
+      JSValue header = JS_GetPropertyUint32(context, argv[4], i);
+      headers[i] = JS_ToCString(context, header);
+      JS_FreeValue(context, header);
+    }
+    posted = p2pml_http_response(engine, id, status, text, url, count / 2, headers);
+    for (uint32_t i = 0; i < count; i++) {
+      JS_FreeCString(context, headers[i]);
+    }
+    JS_FreeCString(context, url);
+    JS_FreeCString(context, text);
+  } else if (kind == 1) {
+    size_t offset = 0;
+    size_t length = 0;
+    size_t size = 0;
+    JSValue buffer = JS_GetTypedArrayBuffer(context, argv[1], &offset, &length, NULL);
+    CHECK(!JS_IsException(buffer));
+    uint8_t *bytes = JS_GetArrayBuffer(context, &size, buffer);
+    posted = p2pml_http_data(engine, id, bytes + offset, length);
+    JS_FreeValue(context, buffer);
+  } else if (kind == 2) {
+    posted = p2pml_http_end(engine, id);
+  } else {
+    const char *message = JS_ToCString(context, argv[1]);
+    CHECK(message != NULL);
+    posted = p2pml_http_fail(engine, id, message);
+    JS_FreeCString(context, message);
+  }
+  return JS_NewBool(context, posted);
+}
+
+static const JSCFunctionListEntry fake_http_functions[] = {
+    JS_CFUNC_MAGIC_DEF("respond", 5, fake_event, 0),
+    JS_CFUNC_MAGIC_DEF("data", 2, fake_event, 1),
+    JS_CFUNC_MAGIC_DEF("end", 1, fake_event, 2),
+    JS_CFUNC_MAGIC_DEF("fail", 2, fake_event, 3),
+};
+
+// Gives the script a global mark() that sets `marked`, closeEngine(),
+// runGc(), and fakeHttp, the fake HTTP client's records and events.
 static void add_test_globals(p2pml_engine *engine, void *data) {
   (void)data;
   engine_to_close = engine;
@@ -321,6 +434,12 @@ static void add_test_globals(p2pml_engine *engine, void *data) {
   JS_SetPropertyStr(context, global, "closeEngine",
                     JS_NewCFunction(context, close_from_js, "closeEngine", 0));
   JS_SetPropertyStr(context, global, "runGc", JS_NewCFunction(context, run_gc, "runGc", 0));
+  JSValue fake = JS_NewObject(context);
+  JS_SetPropertyFunctionList(context, fake, fake_http_functions,
+                             (int)(sizeof fake_http_functions / sizeof fake_http_functions[0]));
+  JS_SetPropertyStr(context, fake, "started", JS_NewArray(context));
+  JS_SetPropertyStr(context, fake, "cancelled", JS_NewArray(context));
+  JS_SetPropertyStr(context, global, "fakeHttp", fake);
   JS_FreeValue(context, global);
 }
 
@@ -755,6 +874,59 @@ static void test_an_exception_from_a_listener_is_reported(void) {
   free_log(&log);
 }
 
+// A close cancels each request that is still open, through the client; not
+// one that ended.
+static void test_the_close_cancels_open_requests(void) {
+  atomic_store(&fake_cancels, 0);
+  run_script("fetch('https://example.com/a');"
+             "fetch('https://example.com/b');"
+             "fetch('https://example.com/ended')"
+             "  .then((response) => response.text())"
+             "  .then(closeEngine);"
+             "const { id } = fakeHttp.started[2];"
+             "fakeHttp.respond(id, 200, 'OK', 'https://example.com/ended', []);"
+             "fakeHttp.end(id);",
+             NULL);
+  CHECK(atomic_load(&fake_cancels) == 2);
+}
+
+// A response that JS cannot take fails its request, and cancels it: the
+// fetch does not wait for a response that it lost.
+static void test_an_event_that_js_cannot_take_fails_the_request(void) {
+  atomic_store(&fake_cancels, 0);
+  captured_log log = {0};
+  run_script("const includes = Array.prototype.includes;"
+             // fetch.js's listener uses it for each response.
+             "Array.prototype.includes = () => { throw new Error('no includes'); };"
+             "fetch('https://example.com/a').then("
+             "  () => console.log('resolved'),"
+             "  (error) => console.log('rejected ' + error.message));"
+             "fakeHttp.respond(fakeHttp.started[0].id, 200, 'OK', 'https://example.com/a', []);"
+             "setTimeout(() => { Array.prototype.includes = includes; closeEngine(); }, 50);",
+             &log);
+  CHECK(log.count == 2);
+  check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught Error: no includes", false);
+  check_line(&log, 1, P2PML_LOG_INFO,
+             "rejected Failed to fetch: the engine could not take an event", true);
+  CHECK(atomic_load(&fake_cancels) == 1);
+  free_log(&log);
+}
+
+// An event after the close is not taken, and its copy is freed (ASan).
+static void test_an_event_after_the_close_is_freed(void) {
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
+  CHECK(engine != NULL);
+  post_close(engine);
+  CHECK(pthread_join(start(engine), NULL) == 0);
+  const char *const headers[] = {"a", "b"};
+  const uint8_t bytes[] = {1, 2, 3};
+  CHECK(!p2pml_http_response(engine, 1, 200, "OK", "https://example.com/", 1, headers));
+  CHECK(!p2pml_http_data(engine, 1, bytes, sizeof bytes));
+  CHECK(!p2pml_http_end(engine, 1));
+  CHECK(!p2pml_http_fail(engine, 1, "late"));
+  p2pml_engine_free(engine);
+}
+
 // Runs each JS test file (test/js) after the setup scripts, in a new engine.
 // Fails on the first log line, such as the report of a failed test, and when
 // a file runs no test.
@@ -764,6 +936,7 @@ static void test_js_files(void) {
   for (int i = 0; i < p2pml_test_scripts_count; i++) {
     p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
     CHECK(engine != NULL);
+    CHECK(p2pml_engine_post(engine, add_test_globals, no_discard, NULL));
     for (int j = 0; j < p2pml_test_setup_count; j++) {
       setup[j] = (eval_task){.code = (const char *)p2pml_test_setup[j].source};
       post_eval(engine, &setup[j]);
@@ -771,8 +944,8 @@ static void test_js_files(void) {
     eval_task tests = {.code = (const char *)p2pml_test_scripts[i].source};
     eval_task count = {.code = "testsFinished()"};
     post_eval(engine, &tests);
+    // testsFinished() closes the engine when the async tests have finished.
     post_eval(engine, &count);
-    post_close(engine);
     stop(engine, start(engine));
     for (int j = 0; j < p2pml_test_setup_count; j++) {
       if (!setup[j].ok) {
@@ -825,6 +998,9 @@ int main(void) {
   test_no_timer_starts_after_close();
   test_close_frees_pending_timers_and_rejections();
   test_an_exception_from_a_listener_is_reported();
+  test_the_close_cancels_open_requests();
+  test_an_event_after_the_close_is_freed();
+  test_an_event_that_js_cannot_take_fails_the_request();
   test_js_files();
   puts("engine tests passed");
   return 0;

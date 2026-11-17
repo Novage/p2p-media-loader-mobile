@@ -1,8 +1,17 @@
 // The checks of the JS tests that engine_test.c runs: a failed test writes an
 // error line, which fails the C test. An async test (one that returns a
-// Promise) finishes in the Promise jobs after its file's task.
+// Promise) can wait for later tasks, such as the events of the fake HTTP
+// client; the engine closes when the file has run and no async test is
+// pending (closeEngine, from engine_test.c).
 let testsRun = 0;
 let testsPending = 0;
+let fileRan = false;
+// How long the async tests of a file may take.
+const ASYNC_LIMIT_MS = 5000;
+
+const closeWhenDone = () => {
+  if (fileRan && testsPending === 0) closeEngine();
+};
 
 globalThis.test = (name, body) => {
   testsRun++;
@@ -14,19 +23,25 @@ globalThis.test = (name, body) => {
     const result = body();
     if (result instanceof Promise) {
       testsPending++;
-      result.catch(fail).finally(() => testsPending--);
+      result.catch(fail).finally(() => {
+        testsPending--;
+        closeWhenDone();
+      });
     }
   } catch (error) {
     fail(error);
   }
 };
 
-// The count of tests, after the task of the file. An async test that has not
-// finished by then fails.
+// The count of tests, in the task after the file's. The engine closes after
+// this task (not in it, which would lose the count), or when the last async
+// test finishes. One that has not finished within the limit fails.
 globalThis.testsFinished = () => {
-  if (testsPending > 0) {
+  fileRan = true;
+  setTimeout(() => {
     console.error(`${testsPending} async test(s) did not finish`);
-  }
+  }, ASYNC_LIMIT_MS);
+  Promise.resolve().then(closeWhenDone);
   return testsRun;
 };
 

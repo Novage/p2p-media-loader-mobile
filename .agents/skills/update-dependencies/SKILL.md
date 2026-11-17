@@ -1,6 +1,6 @@
 ---
 name: update-dependencies
-description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog, the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the vendored native code (QuickJS, Ada), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
+description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog (Ktor, kotlinx-coroutines and OkHttp among them), the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the vendored native code (QuickJS, Ada), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
 ---
 
 # Updating dependencies
@@ -66,6 +66,7 @@ disagree, AGENTS.md is right.
 | WPT URL test data                                     | `native/test/third_party/wpt-url/update.mjs` (`COMMIT`)                            | <https://github.com/web-platform-tests/wpt/tree/master/url>                                                                                                |
 | The web core of the library (`p2p-media-loader-core`) | `native/package.json` (exact version), `native/package-lock.json` (sha512)         | `npm view p2p-media-loader-core versions`; the web repository's tags and CHANGELOG.md                                                                      |
 | Node of CI                                            | `.github/workflows/build.yml` (`node-version`)                                     | the lowest Node that `README.md` names                                                                                                                     |
+| Ktor, kotlinx-coroutines, OkHttp (fetch)              | catalog `ktor`, `kotlinx-coroutines`, `okhttp`                                     | `gh api repos/ktorio/ktor/releases/latest`; Maven Central for kotlinx-coroutines and OkHttp                                                                |
 | node-peer packages, Prettier                          | `tools/node-peer/package.json`, `package-lock.json`                                | `npm view <package> version`                                                                                                                               |
 | The web core of node-peer (`p2p-media-loader-core`)   | `tools/node-peer/package.json`; the local `.core/SOURCE` names the packed checkout | the web repository; see `tools/node-peer/README.md`, "pack-core"                                                                                           |
 
@@ -112,7 +113,32 @@ Then:
 3. For a new `compileSdk` or `targetSdk`, install the platform with the SDK
    Manager, and read the behaviour changes of that Android version. Keep
    `android-minCompileSdk` equal to `compileSdk` unless the user decides
-   otherwise.
+   otherwise. From API 37 on, a platform has a minor version
+   (`platforms;android-37.0`); CI installs `android-<compileSdk>.0`.
+
+## Ktor, kotlinx-coroutines and OkHttp
+
+`fetch` runs over Ktor in common code, with Ktor's OkHttp engine on Android
+(specs/engine.md, "The platform's HTTP client"). Update them as one group.
+
+1. Ktor: read the release notes of each version skipped, for the client API
+   that `HttpBridge.kt` uses (`prepareRequest`, `execute`, `bodyAsChannel`,
+   `readAvailable`), the OkHttp engine's configuration (`SharedHttpClient.kt`),
+   and the Kotlin version it needs.
+2. OkHttp: the catalog's `okhttp` is the version that `ktor-client-okhttp`
+   depends on, so that `mockwebserver3` tests the same OkHttp. Check it with
+   `./gradlew :library:dependencies --configuration androidRuntimeClasspath`.
+3. A new OkHttp can raise the `compileSdk` that apps need (OkHttp 5.5.1 needs
+   API 37): the build stops at `checkAndroidMainAarMetadata`. Raising
+   `compileSdk` and `minCompileSdk` changes what apps compile against: ask
+   the user.
+4. Run the build (`HttpBridgeTest` and `JsFetchTest` use a real local server)
+   and the device test (`JsFetchDeviceTest` logs the throughput).
+5. Measure the sample app's release APK with R8: enable `isMinifyEnabled` with
+   a keep rule for `com.novage.p2pml.**` in a temporary edit of
+   `samples/android/build.gradle.kts`, build `:samples:android:assembleRelease`,
+   compare with the size before, and remove the edit. 2.3a measured 0.42 MB
+   for Ktor and its dependencies.
 
 ## NDK, clang-format and CMake
 

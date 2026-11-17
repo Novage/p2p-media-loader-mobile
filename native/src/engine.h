@@ -11,6 +11,7 @@
 #include "quickjs.h"
 
 typedef struct p2pml_engine p2pml_engine;
+typedef struct p2pml_http_client p2pml_http_client;
 
 // Runs a posted task on the engine thread. The task owns `data` from here on.
 typedef void p2pml_task_run(p2pml_engine *engine, void *data);
@@ -41,10 +42,12 @@ p2pml_engine *p2pml_engine_new(const char *user_agent);
 // returns after p2pml_engine_close. Creates the QuickJS runtime and the
 // globals (specs/engine.md, "Globals") on entry and frees them on return; JS
 // can import the built-in modules ("Modules"). The engine writes its lines
-// through `log`. Returns false if the runtime or its globals cannot be
+// through `log`. `http` is the platform's HTTP client for fetch
+// (src/http.h), copied. Returns false if the runtime or its globals cannot be
 // created, unless a close came first: then it stopped them. The engine is
 // then closed. Call it once.
-bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data);
+bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data,
+                      const p2pml_http_client *http);
 
 // Adds a task to the end of the queue. Any thread. Returns false, and keeps
 // `data` with the caller, once the engine is closed or when out of memory.
@@ -68,6 +71,10 @@ void p2pml_engine_free(p2pml_engine *engine);
 // The engine's context. Engine thread only, while p2pml_engine_run runs. Its
 // opaque (JS_SetContextOpaque) is the engine's own: do not change it.
 JSContext *p2pml_engine_context(p2pml_engine *engine);
+
+// Writes the context's pending exception to the log as an uncaught error, and
+// clears it. Engine thread only, while p2pml_engine_run runs.
+void p2pml_engine_report_exception(p2pml_engine *engine);
 
 // The result of p2pml_engine_eval. The strings are CESU-8, which is the JVM's
 // modified UTF-8 except that U+0000 ends the string; free them with

@@ -57,13 +57,5 @@
     },
   };
 
-  // As WebIDL defines operations of the global object.
-  for (const operation of [btoa, atob]) {
-    Object.defineProperty(globalThis, operation.name, {
-      value: operation,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
+  natives.exposeOperations(btoa, atob);
 };
