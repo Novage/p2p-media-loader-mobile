@@ -105,6 +105,20 @@ its own, tested with web peers in the same swarm.
   through the natives object they get, and the JS tests are in
   `native/test/js/`, run by the C tests. Prettier formats both.
 
+## Skills are procedures
+
+`specs/` says what the system does and why. A skill says how to do a task in
+this repository: the steps, the tools and the traps. Each one is a folder in
+[`.agents/skills/`](.agents/skills/) with a `SKILL.md` whose front matter names
+the skill and says when it applies. `.claude/skills` is a symlink to that
+folder, so Claude Code loads the same files; an agent that loads no skills
+reads the `SKILL.md` of a task before it starts that task. On Windows the
+symlink needs `core.symlinks=true`.
+
+| Skill                                                              | Use it when                                                                        |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [update-dependencies](.agents/skills/update-dependencies/SKILL.md) | Updating any dependency: Gradle, the catalog, the NDK, CI, QuickJS, Ada, node-peer |
+
 ## Things that are deliberate, not oversights
 
 - **The local server gives P2P to relative URLs only.** Through the server, a
