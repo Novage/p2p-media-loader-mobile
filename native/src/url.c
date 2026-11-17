@@ -46,6 +46,17 @@ static const struct {
     {"hash", ada_get_hash, set_hash},
 };
 
+// Set object[name] or object[index] to `value`, which they take. A set
+// stores any value, also the JS_EXCEPTION of a string that could not be made
+// (out of memory): false then, as when the set itself fails.
+static bool set_named(JSContext *context, JSValueConst object, const char *name, JSValue value) {
+  return !JS_IsException(value) && JS_SetPropertyStr(context, object, name, value) >= 0;
+}
+
+static bool set_index(JSContext *context, JSValueConst object, uint32_t index, JSValue value) {
+  return !JS_IsException(value) && JS_SetPropertyUint32(context, object, index, value) >= 0;
+}
+
 // A new object of the parts of a valid URL, origin included.
 static JSValue parts_of(JSContext *context, ada_url url) {
   JSValue parts = JS_NewObject(context);
@@ -54,17 +65,17 @@ static JSValue parts_of(JSContext *context, ada_url url) {
   }
   for (size_t i = 0; i < sizeof PARTS / sizeof PARTS[0]; i++) {
     ada_string part = PARTS[i].get(url);
-    if (JS_SetPropertyStr(context, parts, PARTS[i].name,
-                          JS_NewStringLen(context, part.data, part.length)) < 0) {
+    if (!set_named(context, parts, PARTS[i].name,
+                   JS_NewStringLen(context, part.data, part.length))) {
       JS_FreeValue(context, parts);
       return JS_EXCEPTION;
     }
   }
   ada_owned_string origin = ada_get_origin(url);
-  int set = JS_SetPropertyStr(context, parts, "origin",
-                              JS_NewStringLen(context, origin.data, origin.length));
+  bool set =
+      set_named(context, parts, "origin", JS_NewStringLen(context, origin.data, origin.length));
   ada_free_owned_string(origin);
-  if (set < 0) {
+  if (!set) {
     JS_FreeValue(context, parts);
     return JS_EXCEPTION;
   }
@@ -165,14 +176,13 @@ static JSValue search_parse(JSContext *context, JSValueConst this_value, int arg
     // Ada gives the percent-decoded bytes; the standard decodes them as UTF-8
     // with U+FFFD for each invalid part.
     JSValue pair = JS_NewArray(context);
-    bool made =
-        !JS_IsException(pair) &&
-        JS_SetPropertyUint32(context, pair, 0,
-                             p2pml_new_string_from_utf8(context, (const uint8_t *)entry.key.data,
-                                                        entry.key.length)) >= 0 &&
-        JS_SetPropertyUint32(context, pair, 1,
-                             p2pml_new_string_from_utf8(context, (const uint8_t *)entry.value.data,
-                                                        entry.value.length)) >= 0;
+    bool made = !JS_IsException(pair) &&
+                set_index(context, pair, 0,
+                          p2pml_new_string_from_utf8(context, (const uint8_t *)entry.key.data,
+                                                     entry.key.length)) &&
+                set_index(context, pair, 1,
+                          p2pml_new_string_from_utf8(context, (const uint8_t *)entry.value.data,
+                                                     entry.value.length));
     if (!made) {
       JS_FreeValue(context, pair);
     }
