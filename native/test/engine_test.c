@@ -27,6 +27,9 @@ extern const int p2pml_test_scripts_count;
     }                                                                                              \
   } while (0)
 
+// navigator.userAgent of the test engines.
+#define USER_AGENT "test-agent"
+
 // The lines that an engine wrote. The engine thread writes them; the test
 // reads them after the thread ended.
 enum { MAX_LINES = 32 };
@@ -160,7 +163,7 @@ static void post_eval(p2pml_engine *engine, eval_task *task) {
 }
 
 static void test_close_without_tasks(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   CHECK(engine != NULL);
   pthread_t thread = start(engine);
   p2pml_engine_close(engine);
@@ -169,7 +172,7 @@ static void test_close_without_tasks(void) {
 }
 
 static void test_tasks_run_in_order(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   task_log log = {0};
   for (int i = 0; i < 32; i++) {
     CHECK(post_record(engine, &log, i));
@@ -204,7 +207,7 @@ static void *post_many(void *data) {
 }
 
 static void test_tasks_from_many_threads_run_once(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   pthread_t thread = start(engine);
   static atomic_int runs[POSTERS][POSTS];
   pthread_t posters[POSTERS];
@@ -226,7 +229,7 @@ static void test_tasks_from_many_threads_run_once(void) {
 }
 
 static void test_promise_jobs_run_before_the_next_task(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   eval_task first = {.code = "globalThis.steps = [];"
                              "Promise.resolve().then(() => steps.push('job'));"
                              "steps.push('task');"};
@@ -242,7 +245,7 @@ static void test_promise_jobs_run_before_the_next_task(void) {
 }
 
 static void test_close_from_a_task_discards_the_rest(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   task_log log = {0};
   CHECK(post_record(engine, &log, 1));
   post_close(engine);
@@ -254,7 +257,7 @@ static void test_close_from_a_task_discards_the_rest(void) {
 }
 
 static void test_close_before_run_discards_all(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   task_log log = {0};
   CHECK(post_record(engine, &log, 1));
   p2pml_engine_close(engine);
@@ -264,7 +267,7 @@ static void test_close_before_run_discards_all(void) {
 }
 
 static void test_free_without_run_discards_all(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   task_log log = {0};
   CHECK(post_record(engine, &log, 1));
   p2pml_engine_free(engine);
@@ -328,7 +331,7 @@ static void eval_and_close(p2pml_engine *engine, void *data) {
 
 static void test_no_promise_job_runs_after_close(void) {
   atomic_store(&marked, false);
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   CHECK(p2pml_engine_post(engine, add_test_globals, no_discard, NULL));
   // Freeing the runtime frees the job that does not run.
   eval_task task = {.code = "Promise.resolve().then(mark); 'queued'"};
@@ -343,7 +346,7 @@ static void test_no_promise_job_runs_after_close(void) {
 // engine once the script calls mark(). Any line in the log fails the test.
 static eval_task close_when_marked(const char *code) {
   atomic_store(&marked, false);
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   CHECK(p2pml_engine_post(engine, add_test_globals, no_discard, NULL));
   eval_task task = {.code = code};
   post_eval(engine, &task);
@@ -370,7 +373,7 @@ static void close_and_eval(p2pml_engine *engine, void *data) {
 
 static void test_no_script_runs_after_close(void) {
   atomic_store(&marked, false);
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   CHECK(p2pml_engine_post(engine, add_test_globals, no_discard, NULL));
   eval_task task = {.code = "mark()"};
   CHECK(p2pml_engine_post(engine, close_and_eval, no_discard, &task));
@@ -381,7 +384,7 @@ static void test_no_script_runs_after_close(void) {
 }
 
 static void test_a_script_that_closes_the_engine_fails(void) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   CHECK(p2pml_engine_post(engine, add_test_globals, no_discard, NULL));
   // The script completes, but its result comes after the close.
   eval_task task = {.code = "closeEngine(); 'done'"};
@@ -394,7 +397,7 @@ static void test_a_script_that_closes_the_engine_fails(void) {
 
 // Evaluates one script in a new engine.
 static eval_task eval_once(const char *code) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   eval_task task = {.code = code};
   post_eval(engine, &task);
   post_close(engine);
@@ -447,7 +450,7 @@ static void test_eval_of_a_value_string_cannot_convert(void) {
 // the engine, such as with setTimeout(closeEngine, 50). The script must not
 // throw.
 static void run_script(const char *code, captured_log *log) {
-  p2pml_engine *engine = p2pml_engine_new();
+  p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
   CHECK(engine != NULL);
   CHECK(p2pml_engine_post(engine, add_test_globals, no_discard, NULL));
   eval_task task = {.code = code};
@@ -759,14 +762,14 @@ static void test_js_files(void) {
   eval_task *setup = calloc((size_t)p2pml_test_setup_count, sizeof *setup);
   CHECK(setup != NULL);
   for (int i = 0; i < p2pml_test_scripts_count; i++) {
-    p2pml_engine *engine = p2pml_engine_new();
+    p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
     CHECK(engine != NULL);
     for (int j = 0; j < p2pml_test_setup_count; j++) {
       setup[j] = (eval_task){.code = (const char *)p2pml_test_setup[j].source};
       post_eval(engine, &setup[j]);
     }
     eval_task tests = {.code = (const char *)p2pml_test_scripts[i].source};
-    eval_task count = {.code = "testsRun"};
+    eval_task count = {.code = "testsFinished()"};
     post_eval(engine, &tests);
     post_eval(engine, &count);
     post_close(engine);

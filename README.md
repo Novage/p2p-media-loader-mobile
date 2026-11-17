@@ -20,7 +20,13 @@ You need the Android SDK, with the NDK and CMake versions that
 `gradle/libs.versions.toml` names (Android Studio's SDK Manager installs
 them, under "SDK Tools", with "Show Package Details"), JDK 17 or later, and a
 C and C++20 compiler for the computer, for the C tests (on a Mac, Xcode's
-Command Line Tools; on Linux, gcc and g++ 13 or later).
+Command Line Tools; on Linux, gcc and g++ 13 or later). The build also needs
+Node 24 or later, with npm: it installs the web core that `libp2pml.so`
+embeds (`native/package.json`). Gradle runs `npm` from the `PATH` of its
+daemon, so an IDE that starts Gradle must see the same `PATH` as the
+shell; after a change to `PATH`, such as a new Node, run `./gradlew --stop`. Apps that use the library do not need Node.
+Android Studio's sync runs CMake without Gradle's tasks: on a new clone, run
+`./gradlew :native:npmCi` once before the first sync.
 `./gradlew` uses the JDK that `JAVA_HOME` or `PATH` names; to use Android Studio's own, on a Mac:
 `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`.
 Set the SDK's path in `ANDROID_HOME` or in `local.properties` (`sdk.dir=…`), or
@@ -29,7 +35,7 @@ open the project in Android Studio, which writes `local.properties`.
 | Gradle module     | What it is                                              |
 | ----------------- | ------------------------------------------------------- |
 | `library`         | The Kotlin Multiplatform library                        |
-| `native`          | QuickJS and the JS engine in C, built with the NDK      |
+| `native`          | QuickJS, the JS engine in C, and the web core's bundle  |
 | `samples/android` | A sample app that plays the BBB live stream with Media3 |
 
 `tools/node-peer` is a Node tool, not a Gradle module: it runs the web core as

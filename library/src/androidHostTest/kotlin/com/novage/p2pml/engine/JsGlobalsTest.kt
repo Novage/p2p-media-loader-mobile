@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 // The globals through JNI: their rules are tested in native/test/engine_test.c.
 class JsGlobalsTest {
     private val lines = LinkedBlockingQueue<Pair<JsLog.Level, String>>()
-    private val engine = JsEngine { level, message -> lines.put(level to message) }
+    private val engine = JsEngine(USER_AGENT) { level, message -> lines.put(level to message) }
 
     @AfterTest
     fun closeEngine() {
@@ -52,6 +52,7 @@ class JsGlobalsTest {
     }
 
     private companion object {
+        const val USER_AGENT = "test-agent"
         const val TIMEOUT_SECONDS = 10L
     }
 }

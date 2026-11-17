@@ -13,6 +13,7 @@ the rules for the code that calls it.
 | The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`                                |
 | The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c` |
 | URL parsing: Ada (C++), and its C glue | `native/third_party/ada/` (version in its README.md), `native/src/url.c`    |
+| The web core's bundle, as a module     | `native/package.json` (the npm package), `native/src/modules.c`             |
 | The JNI glue, nothing else             | `native/src/jni.c`                                                          |
 | The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`                              |
 
@@ -83,6 +84,15 @@ does not have. They are in C or in the built-in JS polyfills (see
   ERROR. A `console` call that the close stops, or that starts after it,
   writes nothing and throws the close's error.
 - **`window`**, which is `globalThis`.
+- **`navigator`**, with only `userAgent`: a string that the platform gives
+  when it creates the engine. JS cannot assign either of them, as in a
+  browser (in strict code, an assignment throws a `TypeError`). On Android it
+  is `P2PMediaLoaderMobile/<library version> (Android <release>)`
+  (`UserAgent.kt`). The core reads it for the default of its segment memory
+  limit, `segmentMemoryStorageLimit`: "Android" without "Chrome" or "Firefox"
+  is an Android WebView to the core, 1024 MiB. The core's logger, the `debug`
+  package, adds `%c` colour codes to its lines for "AppleWebKit/" or
+  "Firefox/", which `console` does not substitute; this value has neither.
 - **`TextEncoder` and `TextDecoder`** of the WHATWG Encoding Standard, for
   UTF-8 only: `encode`, and `decode` of an `ArrayBuffer`, a
   `SharedArrayBuffer` or a view of one, with the options `fatal` and
@@ -131,6 +141,33 @@ of options, the count of required arguments, interface constants and the way
 a class becomes a global; `events.js` gives `on…` handler properties,
 the dispatch of a trusted event, and abort steps that run before a signal's
 `abort` event, for the shims of `fetch`, `WebSocket` and WebRTC.
+
+## Modules
+
+JS can import one module, `p2p-media-loader-core`: the web core's bundle with
+its HLS parser (`dist/p2p-media-loader-core-hls.es.js`), as the npm package
+publishes it. QuickJS resolves a name as its default does (a name that
+starts with `.` is relative to the file of the importer); any name that does
+not resolve to `p2p-media-loader-core` fails with a `ReferenceError`.
+
+- **The version** is the one that `native/package.json` pins, exactly;
+  `native/package-lock.json` pins the tarball's sha512. It is the
+  pre-release `5.0.0-alpha.7`, of the peer protocol `v3` of 5.0.0. The web
+  peers it meets must run a core with the same stream identity.
+- **The build:** npm installs the package (`./gradlew :native:npmCi`, which
+  the native build tasks depend on), and `native/CMakeLists.txt` builds the
+  bundle into `libp2pml.so` (`embed_js`). It is the bundle as published, not
+  minified, so that stack traces in the log are readable; the minified one is
+  half the size (190 KB against 370 KB), if the size matters more.
+- **The load:** the first import compiles and runs the bundle; QuickJS keeps
+  the module, so a later import gives the same namespace. The engine does not
+  load it at start: an engine that never imports it costs nothing, and the
+  globals of the engine exist before the core reads them. The core reads
+  WebRTC once, at load; without `RTCPeerConnection` it runs without P2P.
+- **The logs:** the bundle exports `debug`; `debug.enable("p2pml-core:*")`
+  turns on the core's debug lines, which `console.debug` writes. `console`
+  does not substitute a `%` code such as `%s`, `%d` or `%O`, so the code
+  stays in the line, and its value follows at the end of the line.
 
 ## Closing
 

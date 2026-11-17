@@ -4,17 +4,18 @@ import java.util.concurrent.TimeUnit
 
 /**
  * A QuickJS engine on a thread of its own, which runs posted tasks and JS timers one at a time.
- * Only the engine thread touches the JS runtime: tasks call [evaluateScript]. Console lines and
- * uncaught JS errors go to [log]. See specs/engine.md.
+ * Only the engine thread touches the JS runtime: tasks call [evaluateScript]. JS gets [userAgent]
+ * as `navigator.userAgent`, such as [libraryUserAgent]. Console lines and uncaught JS errors go to
+ * [log]. See specs/engine.md.
  */
-internal class JsEngine(private val log: JsLog = JsLog.logcat) {
+internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat) {
     private val lock = Any()
     // Before the native engine, so that a failure here leaves nothing to free.
     private val thread = Thread(null, ::runEngine, "p2pml-engine", STACK_SIZE)
     // Zero once the engine thread has freed the engine. Set by the constructor, then changes only
     // under [lock]; the engine thread may read it without the lock, because only that thread sets
     // it to zero.
-    private var handle: Long = NativeEngine.create()
+    private var handle: Long = NativeEngine.create(userAgent.encodeToByteArray())
 
     init {
         // Not inherited from the thread that creates the engine.

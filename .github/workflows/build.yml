@@ -39,6 +39,14 @@ jobs:
           # The version that `clang-format` in the catalog must name.
           "$ANDROID_HOME/ndk/$(version ndk)/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-format" --version
 
+      # npm installs the web core that the native build embeds
+      # (native/package.json); Node as tools/node-peer needs it.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
       - uses: gradle/actions/setup-gradle@v6
         with:
           # Writes the cache on `next` too, which is not the default branch.

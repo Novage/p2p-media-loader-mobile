@@ -9,8 +9,11 @@ internal object NativeEngine {
         System.loadLibrary("p2pml")
     }
 
-    /** Throws [OutOfMemoryError] when the engine cannot be created. */
-    @JvmStatic external fun create(): Long
+    /**
+     * [userAgent] is `navigator.userAgent`, UTF-8. Throws [OutOfMemoryError] when the engine cannot
+     * be created.
+     */
+    @JvmStatic external fun create(userAgent: ByteArray): Long
 
     /**
      * Blocks until the engine is closed, and writes the engine's lines to [log] meanwhile. False if

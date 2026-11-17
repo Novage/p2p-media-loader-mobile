@@ -115,9 +115,9 @@ folder, so Claude Code loads the same files; an agent that loads no skills
 reads the `SKILL.md` of a task before it starts that task. On Windows the
 symlink needs `core.symlinks=true`.
 
-| Skill                                                              | Use it when                                                                        |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| [update-dependencies](.agents/skills/update-dependencies/SKILL.md) | Updating any dependency: Gradle, the catalog, the NDK, CI, QuickJS, Ada, node-peer |
+| Skill                                                              | Use it when                                                                                      |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| [update-dependencies](.agents/skills/update-dependencies/SKILL.md) | Updating any dependency: Gradle, the catalog, the NDK, CI, QuickJS, Ada, the web core, node-peer |
 
 ## Things that are deliberate, not oversights
 

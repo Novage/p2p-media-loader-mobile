@@ -74,7 +74,7 @@ Without `localStorage` and `process`, nothing turns on the core's debug logs.
 The bundle exports `debug`, so the library turns them on with
 `debug.enable()`.
 
-Two points need a decision in the Android step:
+Two points needed a decision in the Android step:
 
 - **The user agent sets the core's memory limit.** The core's segment storage
   holds up to 1024 MiB when `navigator.userAgent` names an iPhone, an iPad or
@@ -83,6 +83,19 @@ Two points need a decision in the Android step:
   library can set the limit for a phone itself, whatever the user agent says.
   The user agent also decides whether the logger adds browser colour codes
   (`%c`) to its lines.
+
+  Decided in step 2.2c: the user agent is the library's own,
+  `P2PMediaLoaderMobile/<version> (Android <release>)`, with no colour codes
+  (see [engine.md](../engine.md), "Globals"). The library does not set the
+  limit: the core's rule gives 1024 MiB for this user agent, and the app can
+  set another value through the library's config. The limit is a cap, not
+  what the core uses: on live, the segments kept behind and ahead of the
+  playhead take tens of MB; on VOD with no peer, the core holds about what
+  the player requests. On VOD with a peer, the core prefetches over HTTP up
+  to 3000 s ahead and over P2P up to 6000 s ahead, until 90% to 95% of the
+  limit is used, so its segments can take 0.9 to 1 GiB of native memory. The
+  memory check below includes a VOD with a peer.
+
 - **`bufferedAmount` counts differently.** libdatachannel counts only the
   bytes that SCTP has not accepted yet; a browser counts every byte from
   `send()` on. So the core's pacing of uploads starts later than in a browser.
@@ -193,7 +206,12 @@ with only its compilers off still compiles regular expressions, about 5 times
 faster than this, so a CPU run without `--regexp-interpret-all` understates
 the cost in an engine without a JIT. The core's bundle (alpha.7) loaded in
 both QuickJS engines in 10 to 40 ms, processed the BBB playlists in 1 ms, and
-gave the same infohashes as in Node and in browsers.
+gave the same infohashes as in Node and in browsers. In the library's engine
+(step 2.2c), the first import of the bundle takes 16 to 33 ms in an `-O2`
+build on the Mac, and 35 to 120 ms on the OnePlus 7 in the device test's
+debug build, which has no optimization (three runs). The bundle adds 0.37 MB
+to `libp2pml.so` (1.56 MB in all, arm64, stripped) and 1.8 s to a new CMake
+configure.
 
 ## Measurements that decide
 
@@ -205,7 +223,7 @@ the starting values; they are set again if a measurement shows they are wrong.
 | Interop    | A mobile peer and browser peers exchange segments in one swarm, in both directions                             |
 | P2P ratio  | Near the ratio of two browser peers on the same stream                                                         |
 | CPU        | The library adds less than about 10% of one core at 1080p on a mid-range phone, compared with the player alone |
-| Memory     | Stable over a 1-hour run                                                                                       |
+| Memory     | Stable over a 1-hour run, on live and on VOD with a peer                                                       |
 | Background | Audio continues with the screen locked, and P2P follows the background policy                                  |
 | Thermal    | No change of the thermal state that the library causes in 30 minutes                                           |
 

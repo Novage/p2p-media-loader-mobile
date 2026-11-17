@@ -1,16 +1,33 @@
 // The checks of the JS tests that engine_test.c runs: a failed test writes an
-// error line, which fails the C test; testsRun counts the tests.
-globalThis.testsRun = 0;
+// error line, which fails the C test. An async test (one that returns a
+// Promise) finishes in the Promise jobs after its file's task.
+let testsRun = 0;
+let testsPending = 0;
 
 globalThis.test = (name, body) => {
   testsRun++;
-  try {
-    body();
-  } catch (error) {
+  const fail = (error) =>
     console.error(
       `${name}: ${error instanceof Error ? error.message : String(error)}`,
     );
+  try {
+    const result = body();
+    if (result instanceof Promise) {
+      testsPending++;
+      result.catch(fail).finally(() => testsPending--);
+    }
+  } catch (error) {
+    fail(error);
   }
+};
+
+// The count of tests, after the task of the file. An async test that has not
+// finished by then fails.
+globalThis.testsFinished = () => {
+  if (testsPending > 0) {
+    console.error(`${testsPending} async test(s) did not finish`);
+  }
+  return testsRun;
 };
 
 // Shows a value in a failure: a string in quotes, with each character

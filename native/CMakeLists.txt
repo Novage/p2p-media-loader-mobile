@@ -79,7 +79,19 @@ endfunction()
 set(POLYFILLS webidl.js dom_exception.js events.js encoding.js base64.js url.js)
 list(TRANSFORM POLYFILLS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/src/polyfills/)
 embed_js(${CMAKE_BINARY_DIR}/polyfills.c p2pml_polyfills ${POLYFILLS})
-set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c ${CMAKE_BINARY_DIR}/polyfills.c)
+
+# The web core's bundle, the module p2p-media-loader-core (src/modules.c): from
+# the npm package that package.json pins. Gradle installs it (:native:npmCi)
+# before it runs CMake; Android Studio's sync runs CMake without that task.
+set(CORE_BUNDLE
+  ${CMAKE_CURRENT_SOURCE_DIR}/node_modules/p2p-media-loader-core/dist/p2p-media-loader-core-hls.es.js)
+if(NOT EXISTS ${CORE_BUNDLE})
+  message(FATAL_ERROR "${CORE_BUNDLE} is missing: run ./gradlew :native:npmCi")
+endif()
+embed_js(${CMAKE_BINARY_DIR}/core_bundle.c p2pml_core_bundle ${CORE_BUNDLE})
+
+set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c
+  ${CMAKE_BINARY_DIR}/polyfills.c ${CMAKE_BINARY_DIR}/core_bundle.c)
 
 # Ada as released (third_party/ada): C++20, without exceptions, RTTI and
 # URLPattern (so no std::regex). Our C calls only its C API, ada_c.h.

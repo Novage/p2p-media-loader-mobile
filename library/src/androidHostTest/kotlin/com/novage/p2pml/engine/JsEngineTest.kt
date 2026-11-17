@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 class JsEngineTest {
     private val lines: MutableList<Pair<JsLog.Level, String>> =
         Collections.synchronizedList(mutableListOf())
-    private val engine = JsEngine { level, message -> lines += level to message }
+    private val engine = JsEngine(USER_AGENT) { level, message -> lines += level to message }
 
     @AfterTest
     fun closeEngine() {
@@ -149,6 +149,7 @@ class JsEngineTest {
     }
 
     private companion object {
+        const val USER_AGENT = "test-agent"
         const val TIMEOUT_SECONDS = 10L
         const val TASKS = 100
     }

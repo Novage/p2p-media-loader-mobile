@@ -1,6 +1,6 @@
 ---
 name: update-dependencies
-description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog, the Android SDK levels, the NDK, clang-format and CMake, the JDK and the CI actions, the vendored native code (QuickJS, Ada), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
+description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog, the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the vendored native code (QuickJS, Ada), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
 ---
 
 # Updating dependencies
@@ -19,7 +19,8 @@ disagree, AGENTS.md is right.
   you skip over, not only of the newest.
 - **Stable releases only.** No beta, release candidate, alpha or preview,
   unless no stable release works and the reason is written next to the pin
-  (detekt is the one case today). Check the release _name_, not only the
+  (detekt; and the web core, whose 5.0.0 is not released, see "The web core
+  of the library"). Check the release _name_, not only the
   channel: the SDK repository has listed a beta NDK in its stable channel
   (r28 beta 2, `28.0.12674087`), and CI could not install it without the
   preview licence.
@@ -47,24 +48,26 @@ disagree, AGENTS.md is right.
 
 ## Where each dependency is pinned
 
-| Dependency                                          | Pinned in                                                                          | Releases                                                                                                                                                   |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gradle                                              | `gradle/wrapper/gradle-wrapper.properties` (version, sha256)                       | <https://gradle.org/releases/>, <https://services.gradle.org/versions/current>                                                                             |
-| AGP (all `com.android.*` plugins)                   | `gradle/libs.versions.toml` `agp`                                                  | `https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml`; release notes on developer.android.com                        |
-| Kotlin (KMP plugin)                                 | catalog `kotlin`                                                                   | `gh api repos/JetBrains/kotlin/releases`                                                                                                                   |
-| detekt                                              | catalog `detekt`                                                                   | `gh api repos/detekt/detekt/releases`                                                                                                                      |
-| Spotless, ktfmt                                     | catalog `spotless`, `ktfmt`                                                        | `gh api repos/diffplug/spotless/releases`, `gh api repos/facebook/ktfmt/releases`                                                                          |
-| Media3 (sample app)                                 | catalog `media3`                                                                   | `gh api repos/androidx/media/releases`                                                                                                                     |
-| androidx.test runner                                | catalog `androidx-test-runner`                                                     | Google Maven `androidx/test/runner/maven-metadata.xml`                                                                                                     |
-| Android SDK levels                                  | catalog `android-*`                                                                | the platforms that the SDK Manager offers                                                                                                                  |
-| NDK, its clang-format, CMake                        | catalog `ndk`, `clang-format`, `cmake`                                             | `https://dl.google.com/android/repository/repository2-3.xml`; the NDK's `source.properties` (`Pkg.ReleaseName`); <https://github.com/android/ndk/releases> |
-| JDK of CI                                           | `.github/workflows/build.yml` (`java-version`)                                     | the lowest JDK that `README.md` names                                                                                                                      |
-| GitHub Actions                                      | `.github/workflows/build.yml` (`uses:`)                                            | `gh api repos/<owner>/<action>/releases/latest`                                                                                                            |
-| QuickJS                                             | `native/third_party/quickjs/` (files, `VERSION`, README's sha256)                  | <https://bellard.org/quickjs/>                                                                                                                             |
-| Ada                                                 | `native/third_party/ada/` (files, README's sha256)                                 | `gh api repos/ada-url/ada/releases/latest` (each asset has a `digest`)                                                                                     |
-| WPT URL test data                                   | `native/test/third_party/wpt-url/update.mjs` (`COMMIT`)                            | <https://github.com/web-platform-tests/wpt/tree/master/url>                                                                                                |
-| node-peer packages, Prettier                        | `tools/node-peer/package.json`, `package-lock.json`                                | `npm view <package> version`                                                                                                                               |
-| The web core of node-peer (`p2p-media-loader-core`) | `tools/node-peer/package.json`; the local `.core/SOURCE` names the packed checkout | the web repository; see `tools/node-peer/README.md`, "pack-core"                                                                                           |
+| Dependency                                            | Pinned in                                                                          | Releases                                                                                                                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gradle                                                | `gradle/wrapper/gradle-wrapper.properties` (version, sha256)                       | <https://gradle.org/releases/>, <https://services.gradle.org/versions/current>                                                                             |
+| AGP (all `com.android.*` plugins)                     | `gradle/libs.versions.toml` `agp`                                                  | `https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml`; release notes on developer.android.com                        |
+| Kotlin (KMP plugin)                                   | catalog `kotlin`                                                                   | `gh api repos/JetBrains/kotlin/releases`                                                                                                                   |
+| detekt                                                | catalog `detekt`                                                                   | `gh api repos/detekt/detekt/releases`                                                                                                                      |
+| Spotless, ktfmt                                       | catalog `spotless`, `ktfmt`                                                        | `gh api repos/diffplug/spotless/releases`, `gh api repos/facebook/ktfmt/releases`                                                                          |
+| Media3 (sample app)                                   | catalog `media3`                                                                   | `gh api repos/androidx/media/releases`                                                                                                                     |
+| androidx.test runner                                  | catalog `androidx-test-runner`                                                     | Google Maven `androidx/test/runner/maven-metadata.xml`                                                                                                     |
+| Android SDK levels                                    | catalog `android-*`                                                                | the platforms that the SDK Manager offers                                                                                                                  |
+| NDK, its clang-format, CMake                          | catalog `ndk`, `clang-format`, `cmake`                                             | `https://dl.google.com/android/repository/repository2-3.xml`; the NDK's `source.properties` (`Pkg.ReleaseName`); <https://github.com/android/ndk/releases> |
+| JDK of CI                                             | `.github/workflows/build.yml` (`java-version`)                                     | the lowest JDK that `README.md` names                                                                                                                      |
+| GitHub Actions                                        | `.github/workflows/build.yml` (`uses:`)                                            | `gh api repos/<owner>/<action>/releases/latest`                                                                                                            |
+| QuickJS                                               | `native/third_party/quickjs/` (files, `VERSION`, README's sha256)                  | <https://bellard.org/quickjs/>                                                                                                                             |
+| Ada                                                   | `native/third_party/ada/` (files, README's sha256)                                 | `gh api repos/ada-url/ada/releases/latest` (each asset has a `digest`)                                                                                     |
+| WPT URL test data                                     | `native/test/third_party/wpt-url/update.mjs` (`COMMIT`)                            | <https://github.com/web-platform-tests/wpt/tree/master/url>                                                                                                |
+| The web core of the library (`p2p-media-loader-core`) | `native/package.json` (exact version), `native/package-lock.json` (sha512)         | `npm view p2p-media-loader-core versions`; the web repository's tags and CHANGELOG.md                                                                      |
+| Node of CI                                            | `.github/workflows/build.yml` (`node-version`)                                     | the lowest Node that `README.md` names                                                                                                                     |
+| node-peer packages, Prettier                          | `tools/node-peer/package.json`, `package-lock.json`                                | `npm view <package> version`                                                                                                                               |
+| The web core of node-peer (`p2p-media-loader-core`)   | `tools/node-peer/package.json`; the local `.core/SOURCE` names the packed checkout | the web repository; see `tools/node-peer/README.md`, "pack-core"                                                                                           |
 
 ## Gradle wrapper
 
@@ -208,6 +211,38 @@ the web-platform-tests at one commit and writes the `*_data.js` files.
    Standard changed and Ada does not follow yet is a known issue of Ada:
    report it; never edit the data.
 
+## The web core of the library
+
+`libp2pml.so` embeds the bundle of the npm package `p2p-media-loader-core`
+(specs/engine.md, "Modules"). Update it when the library moves to a new core,
+not as a routine update: the core decides the swarms that a mobile peer
+joins.
+
+1. Read the web repository's CHANGELOG.md and MIGRATION.md from the old
+   version to the new one, for changes to the stream identity, the peer
+   protocol (`PEER_PROTOCOL_VERSION`), the globals the core reads, and the
+   bundle's file name and exports. Read the user-agent rule of the default
+   segment memory limit in the new bundle (`isAndroidWebview` and the
+   limits in its segment memory storage): specs/engine.md, "Globals", says
+   which limit the library's user agent gets.
+2. In `native/`: `npm install --save-exact --ignore-scripts
+p2p-media-loader-core@<version>`. Check that the lockfile's `integrity`
+   is the one that `npm view p2p-media-loader-core@<version> dist.integrity`
+   gives.
+3. Update the version that `specs/engine.md` names, and the same version in
+   `tools/node-peer`, so that the measurements run the core that the library
+   embeds.
+4. Run the build. The tests check the stream identity against the web
+   repository's golden vectors
+   (`packages/p2p-media-loader-core/test/stream-identity.test.ts`):
+   `native/test/js/core_test.js`, `JsCoreTest.kt` and
+   `JsEngineDeviceTest.kt`. When the web repository changes those vectors,
+   change the tests with them, never to make a test pass.
+5. `./gradlew :library:connectedAndroidDeviceTest` on the phone: it logs the
+   bundle's load time. Measure the size of `libp2pml.so` as for QuickJS.
+6. The web peers of a mixed-swarm test must run a core with the same stream
+   identity.
+
 ## tools/node-peer
 
 A Node tool for measurements (see its README). Its packages are pinned by
@@ -231,7 +266,8 @@ For every update, before you report it done:
 1. `./gradlew spotlessApply`, then `./gradlew build --console=plain`: no
    warning; the C and JS tests, with all WPT cases, and the JVM tests pass.
 2. `./gradlew build` a second time: the configuration cache is reused.
-3. For a change to the NDK, CMake, QuickJS, Ada or the C or C++ flags:
+3. For a change to the NDK, CMake, QuickJS, Ada, the web core or the C or
+   C++ flags:
    `./gradlew :library:connectedAndroidDeviceTest` on the phone. Ask the user
    to connect it.
 4. After the push that the user asks for: the CI run of the commit passes

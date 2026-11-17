@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include "encoding.h"
+#include "modules.h"
 #include "polyfills.h"
 #include "url.h"
 
@@ -67,6 +68,8 @@ struct p2pml_engine {
   // The nesting of the timer that runs, or 0.
   int timer_nesting;
   rejection *rejections;
+  // navigator.userAgent, UTF-8.
+  char user_agent[];
 };
 
 // The monotonic clock: it does not follow changes of the wall clock, and it
@@ -101,11 +104,13 @@ static int init_wake(pthread_cond_t *wake) {
 #endif
 }
 
-p2pml_engine *p2pml_engine_new(void) {
-  p2pml_engine *engine = calloc(1, sizeof *engine);
+p2pml_engine *p2pml_engine_new(const char *user_agent) {
+  size_t size = strlen(user_agent) + 1;
+  p2pml_engine *engine = calloc(1, sizeof *engine + size);
   if (engine == NULL) {
     return NULL;
   }
+  memcpy(engine->user_agent, user_agent, size);
   if (pthread_mutex_init(&engine->mutex, NULL) != 0) {
     free(engine);
     return NULL;
@@ -547,6 +552,27 @@ static bool add_polyfills(p2pml_engine *engine) {
   return added;
 }
 
+// Adds navigator, with only userAgent; neither can be assigned, as in a
+// browser. `global` stays the caller's.
+static bool add_navigator(p2pml_engine *engine, JSValueConst global) {
+  JSContext *context = engine->context;
+  JSValue navigator = JS_NewObject(context);
+  JSValue agent = JS_NewString(context, engine->user_agent);
+  // Checked before the define, which stores any value, also JS_EXCEPTION.
+  if (JS_IsException(navigator) || JS_IsException(agent)) {
+    JS_FreeValue(context, agent);
+    JS_FreeValue(context, navigator);
+    return false;
+  }
+  // A define takes the value, also when it fails.
+  if (JS_DefinePropertyValueStr(context, navigator, "userAgent", agent, JS_PROP_ENUMERABLE) < 0) {
+    JS_FreeValue(context, navigator);
+    return false;
+  }
+  return JS_DefinePropertyValueStr(context, global, "navigator", navigator, JS_PROP_CONFIGURABLE) >=
+         0;
+}
+
 // The globals that QuickJS does not have and the web core needs: those in C,
 // then the polyfills. False when one cannot be added.
 static bool add_globals(p2pml_engine *engine) {
@@ -554,7 +580,8 @@ static bool add_globals(p2pml_engine *engine) {
   JSValue global = JS_GetGlobalObject(context);
   bool added =
       JS_SetPropertyFunctionList(context, global, global_functions, COUNT(global_functions)) == 0 &&
-      JS_SetPropertyStr(context, global, "window", JS_DupValue(context, global)) >= 0;
+      JS_SetPropertyStr(context, global, "window", JS_DupValue(context, global)) >= 0 &&
+      add_navigator(engine, global);
   JS_FreeValue(context, global);
   return added && add_polyfills(engine);
 }
@@ -576,6 +603,7 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   if (engine->runtime != NULL) {
     JS_SetInterruptHandler(engine->runtime, interrupt_if_closed, engine);
     JS_SetHostPromiseRejectionTracker(engine->runtime, track_rejection, engine);
+    p2pml_add_modules(engine->runtime);
     engine->context = JS_NewContext(engine->runtime);
   }
   if (engine->context != NULL) {

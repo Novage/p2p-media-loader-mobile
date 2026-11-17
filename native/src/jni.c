@@ -95,9 +95,33 @@ static void throw_out_of_memory(JNIEnv *env) {
   }
 }
 
-JNIEXPORT jlong JNICALL Java_com_novage_p2pml_engine_NativeEngine_create(JNIEnv *env, jclass type) {
+// The bytes of `bytes` with a NUL after them, which the caller frees, and
+// their count in `length` if it is not NULL. NULL with an OutOfMemoryError
+// when out of memory.
+static char *copy_bytes(JNIEnv *env, jbyteArray bytes, jsize *length) {
+  jsize count = (*env)->GetArrayLength(env, bytes);
+  char *copy = malloc((size_t)count + 1);
+  if (copy == NULL) {
+    throw_out_of_memory(env);
+    return NULL;
+  }
+  (*env)->GetByteArrayRegion(env, bytes, 0, count, (jbyte *)copy);
+  copy[count] = '\0';
+  if (length != NULL) {
+    *length = count;
+  }
+  return copy;
+}
+
+JNIEXPORT jlong JNICALL Java_com_novage_p2pml_engine_NativeEngine_create(JNIEnv *env, jclass type,
+                                                                         jbyteArray user_agent) {
   (void)type;
-  p2pml_engine *engine = p2pml_engine_new();
+  char *agent = copy_bytes(env, user_agent, NULL);
+  if (agent == NULL) {
+    return 0;
+  }
+  p2pml_engine *engine = p2pml_engine_new(agent);
+  free(agent);
   if (engine == NULL) {
     throw_out_of_memory(env);
     return 0;
@@ -194,15 +218,12 @@ static void throw_js_exception(JNIEnv *env, const p2pml_eval_result *result) {
 JNIEXPORT jstring JNICALL Java_com_novage_p2pml_engine_NativeEngine_evaluateScript(
     JNIEnv *env, jclass type, jlong handle, jbyteArray code, jstring file_name) {
   (void)type;
-  jsize length = (*env)->GetArrayLength(env, code);
+  jsize length;
   // QuickJS needs a NUL after the code.
-  char *source = malloc((size_t)length + 1);
+  char *source = copy_bytes(env, code, &length);
   if (source == NULL) {
-    throw_out_of_memory(env);
     return NULL;
   }
-  (*env)->GetByteArrayRegion(env, code, 0, length, (jbyte *)source);
-  source[length] = '\0';
   const char *name = (*env)->GetStringUTFChars(env, file_name, NULL);
   if (name == NULL) {
     free(source);

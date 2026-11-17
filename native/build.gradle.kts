@@ -123,6 +123,22 @@ abstract class HostNativeTest : DefaultTask() {
     }
 }
 
+// The web core's bundle that CMakeLists.txt embeds: the npm package that package.json pins, at the
+// sha512 of package-lock.json.
+val coreBundle = "node_modules/p2p-media-loader-core/dist/p2p-media-loader-core-hls.es.js"
+val npmCi =
+    tasks.register<Exec>("npmCi") {
+        workingDir = layout.projectDirectory.asFile
+        commandLine("npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund")
+        inputs
+            .files("package.json", "package-lock.json")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.file(coreBundle)
+    }
+
+// The CMake tasks of the Android build run after preBuild, for each variant and ABI.
+tasks.named("preBuild") { dependsOn(npmCi) }
+
 val sdk = androidComponents.sdkComponents
 val sdkCmakeBin = sdk.sdkDirectory.map { it.dir("cmake/${libs.versions.cmake.get()}/bin") }
 // The NDK's tools for this computer.
@@ -132,7 +148,7 @@ val hostBuildDir = layout.buildDirectory.dir("host")
 
 val hostNativeBuild =
     tasks.register<HostNativeBuild>("hostNativeBuild") {
-        sources.from("CMakeLists.txt", ".clang-tidy", "src", "test", "third_party")
+        sources.from("CMakeLists.txt", ".clang-tidy", "src", "test", "third_party", npmCi)
         sourceDir = layout.projectDirectory
         cmakeBin = sdkCmakeBin
         jniHeader = ndkToolchain.map { it.file("sysroot/usr/include/jni.h") }
