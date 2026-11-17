@@ -11,13 +11,10 @@
     new DOMException(message, "InvalidCharacterError");
 
   // Methods, as WebIDL operations: not constructors, with no prototype. Not
-  // arrows: WebIDL counts the arguments, and a missing one throws.
+  // arrows: they read `arguments`.
   const { btoa, atob } = {
     btoa(data) {
-      if (arguments.length === 0) {
-        throw new TypeError("btoa: 1 argument required");
-      }
-      // A template literal converts as WebIDL does: a Symbol throws.
+      natives.requireArguments(arguments.length, 1, "btoa");
       const text = `${data}`;
       const bytes = new Uint8Array(text.length);
       for (let i = 0; i < text.length; i++) {
@@ -36,9 +33,7 @@
     // skips ASCII whitespace, takes a final group without its padding, and
     // ignores the extra bits of that group.
     atob(data) {
-      if (arguments.length === 0) {
-        throw new TypeError("atob: 1 argument required");
-      }
+      natives.requireArguments(arguments.length, 1, "atob");
       // Before the try: an error of the conversion is not a decode error.
       const text = `${data}`;
       let bytes;

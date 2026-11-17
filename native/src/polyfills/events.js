@@ -25,10 +25,7 @@
     #state;
 
     constructor(type, init = undefined) {
-      if (arguments.length === 0) {
-        throw new TypeError("Event: the type is required");
-      }
-      // A template literal converts as WebIDL does: a Symbol throws.
+      natives.requireArguments(arguments.length, 1, "Event");
       const name = `${type}`;
       const { bubbles, cancelable, composed } = natives.dictionary(init);
       this.#state = {
@@ -118,24 +115,21 @@
     }
   }
 
-  // addEventListener's options: a dictionary, or a boolean for capture.
+  // addEventListener's options: a dictionary, or a boolean for capture. As
+  // WebIDL's union, undefined and null are the dictionary (its defaults).
   const listenerOptions = (options) =>
-    options === undefined ||
-    typeof options === "object" ||
-    typeof options === "function"
+    options === undefined || options === null || natives.isObject(options)
       ? natives.dictionary(options)
       : { capture: options };
 
-  // A callback: an object or a function (WebIDL's EventListener), or null.
+  // A callback: an object or a function (WebIDL's EventListener), or null
+  // (also for undefined).
   const checkCallback = (callback) => {
-    if (
-      typeof callback !== "object" &&
-      typeof callback !== "function" &&
-      callback !== undefined
-    ) {
+    if (callback === undefined || callback === null) return null;
+    if (!natives.isObject(callback)) {
       throw new TypeError("The listener is not an object");
     }
-    return callback ?? null;
+    return callback;
   };
 
   class EventTarget {

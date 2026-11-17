@@ -126,8 +126,9 @@ object of C helpers; the helpers do not become globals. If a polyfill fails,
 the engine does not start, as when the runtime cannot be created.
 
 A polyfill can also put helpers on that object for the polyfills after it:
-`webidl.js` gives the conversion of options, interface constants and the
-way a class becomes a global; `events.js` gives `on…` handler properties,
+`webidl.js` gives WebIDL's object test, the conversions of a USVString and
+of options, the count of required arguments, interface constants and the way
+a class becomes a global; `events.js` gives `on…` handler properties,
 the dispatch of a trusted event, and abort steps that run before a signal's
 `abort` event, for the shims of `fetch`, `WebSocket` and WebRTC.
 

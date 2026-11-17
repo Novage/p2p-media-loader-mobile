@@ -18,10 +18,8 @@
       return "utf-8";
     }
 
-    // A template literal converts as WebIDL does: a Symbol throws. A
-    // USVString has U+FFFD for each lone surrogate: toWellFormed.
     encode(input = "") {
-      return natives.utf8Encode(`${input}`.toWellFormed());
+      return natives.utf8Encode(natives.usvString(input));
     }
 
     encodeInto() {

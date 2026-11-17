@@ -218,6 +218,13 @@ test("URLSearchParams takes a string, pairs or a record", () => {
     "record",
   );
   assertEquals(new URLSearchParams().toString(), "", "nothing");
+  // WebIDL's union: null is not an object, so it is the string "null"
+  // (Node takes null as no argument).
+  assertEquals(
+    new URLSearchParams(null).toString(),
+    "null=",
+    "null is a string",
+  );
   assertEquals(
     new URLSearchParams("a=%zz&b=%41+%2B").get("b"),
     "A +",

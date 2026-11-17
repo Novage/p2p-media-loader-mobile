@@ -4,17 +4,8 @@
 // as Node's URL does over Ada. A URL keeps the parts that Ada gives; a setter
 // asks Ada for the parts after it.
 (natives) => {
-  // WebIDL's USVString: a string, with U+FFFD for each lone surrogate. A
-  // template literal converts as WebIDL does: a Symbol throws.
-  const usv = (value) => `${value}`.toWellFormed();
+  const { usvString: usv, requireArguments, isObject } = natives;
   const optionalUsv = (value) => (value === undefined ? undefined : usv(value));
-  const requireArguments = (count, needed, name) => {
-    if (count < needed) {
-      throw new TypeError(
-        `${name}: ${needed} argument${needed > 1 ? "s" : ""} required`,
-      );
-    }
-  };
 
   // A URL made from parts that Ada already gave (URL.parse).
   const FROM_PARTS = Symbol("URL parts");
@@ -38,17 +29,10 @@
 
     // A sequence of pairs, a record, or a string (with or without "?").
     constructor(init = "") {
-      // A function is an object to WebIDL too.
-      if (
-        (typeof init === "object" && init !== null) ||
-        typeof init === "function"
-      ) {
+      if (isObject(init)) {
         if (typeof init[Symbol.iterator] === "function") {
           for (const pair of init) {
-            if (
-              (typeof pair !== "object" || pair === null) &&
-              typeof pair !== "function"
-            ) {
+            if (!isObject(pair)) {
               throw new TypeError("URLSearchParams: a pair is not a sequence");
             }
             const items = [...pair];

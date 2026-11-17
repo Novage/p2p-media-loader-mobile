@@ -70,7 +70,7 @@ static size_t repair(const uint8_t *bytes, size_t length, uint8_t *out, bool *re
 }
 
 // utf8Encode(string): a new Uint8Array of the string in UTF-8. The string
-// has no lone surrogate (the polyfill calls toWellFormed), which QuickJS would
+// has no lone surrogate (the polyfill gives a USVString), which QuickJS would
 // keep, as ED A0-BF xx. QuickJS's convention: the arguments stay QuickJS's,
 // and the returned value is new, for the caller to free.
 static JSValue utf8_encode(JSContext *context, JSValueConst this_value, int argc,

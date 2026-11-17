@@ -99,6 +99,21 @@ test("a listener is added once for its type, callback and capture", () => {
   assertThrows(TypeError, () => target.addEventListener("x", 1), "a number");
 });
 
+test("null and undefined options are the defaults", () => {
+  const target = new EventTarget();
+  let count = 0;
+  const listener = () => count++;
+  target.addEventListener("x", listener, null);
+  target.dispatchEvent(new Event("x"));
+  target.removeEventListener("x", listener, undefined);
+  target.dispatchEvent(new Event("x"));
+  assertEquals(count, 1, "added with null, removed with undefined");
+  target.addEventListener("x", listener, true);
+  target.removeEventListener("x", listener, null);
+  target.dispatchEvent(new Event("x"));
+  assertEquals(count, 2, "null is not capture: the capture listener stays");
+});
+
 test("the list is copied at the start of a dispatch", () => {
   const target = new EventTarget();
   const calls = [];

@@ -43,7 +43,6 @@
     #name;
     #message;
 
-    // Template literals convert as WebIDL does: a Symbol throws.
     constructor(message = "", name = "Error") {
       super();
       // The stack starts at the caller, as in a browser.
