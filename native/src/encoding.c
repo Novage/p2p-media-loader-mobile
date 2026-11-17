@@ -121,13 +121,23 @@ static JSValue utf8_decode(JSContext *context, JSValueConst this_value, int argc
     bytes += 3;
     length -= 3;
   }
+  if (JS_ToBool(context, argv[1])) {
+    bool replaced = false;
+    repair(bytes, length, NULL, &replaced);
+    if (replaced) {
+      return JS_ThrowTypeError(context, "The encoded data is not valid UTF-8");
+    }
+  }
+  return p2pml_new_string_from_utf8(context, bytes, length);
+}
+
+JSValue p2pml_new_string_from_utf8(JSContext *context, const uint8_t *bytes, size_t length) {
   bool replaced = false;
   size_t repaired_length = repair(bytes, length, NULL, &replaced);
+  // QuickJS's own decoder replaces invalid bytes in other ways: only valid
+  // UTF-8 goes to it.
   if (!replaced) {
     return JS_NewStringLen(context, (const char *)bytes, length);
-  }
-  if (JS_ToBool(context, argv[1])) {
-    return JS_ThrowTypeError(context, "The encoded data is not valid UTF-8");
   }
   uint8_t *repaired = malloc(repaired_length);
   if (repaired == NULL) {

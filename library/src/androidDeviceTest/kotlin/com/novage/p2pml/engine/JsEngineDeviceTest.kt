@@ -19,8 +19,11 @@ class JsEngineDeviceTest {
                     runCatching {
                             engine.evaluateScript(
                                 "setTimeout(() => console.log('$marker'), 1);" +
-                                    // The polyfills of the Android build; a number result.
-                                    "new TextDecoder().decode(new TextEncoder().encode('6')) * 7",
+                                    // The polyfills and Ada of the Android build, with an
+                                    // IDNA host and a query; a number result.
+                                    "const u = new URL('../?n=6', 'https://b\\u00fccher.example/a/b');" +
+                                    "(u.host === 'xn--bcher-kva.example' ? new TextDecoder().decode(" +
+                                    "new TextEncoder().encode(u.searchParams.get('n'))) : 0) * 7",
                                 "device.js",
                             )
                         }

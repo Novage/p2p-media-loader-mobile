@@ -19,8 +19,8 @@ published. The current version, an Android library, is on the
 You need the Android SDK, with the NDK and CMake versions that
 `gradle/libs.versions.toml` names (Android Studio's SDK Manager installs
 them, under "SDK Tools", with "Show Package Details"), JDK 17 or later, and a
-C compiler for the computer, for the C tests (on a Mac, Xcode's Command Line
-Tools).
+C and C++20 compiler for the computer, for the C tests (on a Mac, Xcode's
+Command Line Tools; on Linux, gcc and g++ 13 or later).
 `./gradlew` uses the JDK that `JAVA_HOME` or `PATH` names; to use Android Studio's own, on a Mac:
 `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`.
 Set the SDK's path in `ANDROID_HOME` or in `local.properties` (`sdk.dir=…`), or

@@ -12,12 +12,15 @@ the rules for the code that calls it.
 | QuickJS, Bellard's release as released | `native/third_party/quickjs/` (version in its README.md)                    |
 | The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`                                |
 | The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c` |
+| URL parsing: Ada (C++), and its C glue | `native/third_party/ada/` (version in its README.md), `native/src/url.c`    |
 | The JNI glue, nothing else             | `native/src/jni.c`                                                          |
 | The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`                              |
 
 The engine is plain C, so that iOS calls the same code through cinterop, and
-native libraries such as libdatachannel call it with no JNI. The C code and
-QuickJS make one shared library, `libp2pml.so`.
+native libraries such as libdatachannel call it with no JNI. The C code,
+QuickJS and Ada make one shared library, `libp2pml.so`. Ada is C++: the
+library links libc++ statically on Android, and exports only the JNI
+functions.
 
 ## One engine, one thread
 
@@ -86,6 +89,10 @@ does not have. They are in C or in the built-in JS polyfills (see
   `ignoreBOM`. A label of another encoding throws a `RangeError`, as an
   unknown label does. `decode` with `{stream: true}` and `encodeInto` throw a
   `TypeError`: the core does not use them.
+- **`URL` and `URLSearchParams`** of the WHATWG URL Standard: Ada, the URL
+  parser of Node.js, parses and serializes, as the standard defines, IDNA
+  hosts included. `URL.createObjectURL` and `revokeObjectURL` (File API)
+  are absent: the core does not use them.
 - **`btoa` and `atob`** of the HTML Standard: `atob` is the forgiving base64
   decode. A code unit above U+00FF (`btoa`) or input that is not base64
   (`atob`) throws a `DOMException` named `InvalidCharacterError`.
@@ -108,10 +115,12 @@ does not have. They are in C or in the built-in JS polyfills (see
 A global that is mostly API surface is written in JS, with its byte work in
 C. The base64 byte work of `btoa` and `atob` is QuickJS's own: the
 `Uint8Array` base64 functions, with `fromBase64` in its "loose" mode, which
-is the forgiving decode. The JS files are in `native/src/polyfills/`; the
-build turns each into a C array (`embed_js` in `native/CMakeLists.txt`), so
-they are part of `libp2pml.so`. When the engine starts, after the globals in
-C, it evaluates each file in the order the build lists them. A file is one
+is the forgiving decode. The parsing and serializing of `URL` and
+`URLSearchParams` is Ada's, which `url.c` calls through Ada's C API. The JS
+files are in `native/src/polyfills/`; the build turns each into a C array
+(`embed_js` in `native/CMakeLists.txt`), so they are part of `libp2pml.so`.
+When the engine starts, after the globals in C, it evaluates each file in the
+order the build lists them. A file is one
 function expression, `(natives) => { … }`, which the engine calls with an
 object of C helpers; the helpers do not become globals. If a polyfill fails,
 the engine does not start, as when the runtime cannot be created.

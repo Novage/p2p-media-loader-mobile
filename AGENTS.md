@@ -95,9 +95,10 @@ its own, tested with web peers in the same swarm.
 - Match the surrounding code's style, comment density and naming. Comments
   explain _why_; they do not restate the code.
 - **C in `native/`:** C11 with GNU extensions (gnu11, for POSIX and platform
-  functions), no C++. Each function that takes or
-  returns a `JSValue` says who frees it; QuickJS's leak check in the C tests
-  catches a value not freed. Only the engine thread touches a runtime (see
+  functions). No C++ in our code: Ada (`native/third_party/ada/`) is C++20,
+  compiled as released, and our C calls only its C API. Each function that
+  takes or returns a `JSValue` says who frees it; QuickJS's leak check in the
+  C tests catches a value not freed. Only the engine thread touches a runtime (see
   [`specs/engine.md`](specs/engine.md)). `native/third_party/` holds code as
   released: never edit it, update it as its README says.
 - **JS in `native/`:** the polyfills (`native/src/polyfills/`) reach C only

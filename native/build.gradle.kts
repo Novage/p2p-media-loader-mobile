@@ -16,8 +16,9 @@ android {
         aarMetadata { minCompileSdk = libs.versions.android.minCompileSdk.get().toInt() }
         // x86 runs only on old emulators.
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64") }
-        // The C code uses no C++ library.
-        externalNativeBuild { cmake { arguments += "-DANDROID_STL=none" } }
+        // Ada (third_party) is C++: libc++ is linked into libp2pml.so, which
+        // exports none of it.
+        externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }
     }
 
     externalNativeBuild {

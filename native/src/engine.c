@@ -2,6 +2,7 @@
 
 #include "encoding.h"
 #include "polyfills.h"
+#include "url.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -525,7 +526,7 @@ static bool add_polyfills(p2pml_engine *engine) {
   bool added = !JS_IsException(natives) &&
                JS_SetPropertyFunctionList(context, natives, native_functions,
                                           COUNT(native_functions)) == 0 &&
-               p2pml_add_encoding(context, natives);
+               p2pml_add_encoding(context, natives) && p2pml_add_url(context, natives);
   for (int i = 0; added && i < p2pml_polyfills_count; i++) {
     const p2pml_script *script = &p2pml_polyfills[i];
     const char *source = (const char *)script->source;

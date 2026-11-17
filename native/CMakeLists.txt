@@ -4,7 +4,7 @@
 # and the C tests with sanitizers.
 
 cmake_minimum_required(VERSION 3.22)
-project(p2pml C)
+project(p2pml C CXX)
 
 set(CMAKE_C_STANDARD 11)
 # gnu11, not c11: the code uses POSIX and platform functions, such as strdup.
@@ -76,16 +76,43 @@ function(embed_js output list)
 endfunction()
 
 # The JS polyfills, in the order the engine evaluates them.
-set(POLYFILLS webidl.js dom_exception.js events.js encoding.js base64.js)
+set(POLYFILLS webidl.js dom_exception.js events.js encoding.js base64.js url.js)
 list(TRANSFORM POLYFILLS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/src/polyfills/)
 embed_js(${CMAKE_BINARY_DIR}/polyfills.c p2pml_polyfills ${POLYFILLS})
-set(ENGINE_SOURCES src/engine.c src/encoding.c ${CMAKE_BINARY_DIR}/polyfills.c)
+set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c ${CMAKE_BINARY_DIR}/polyfills.c)
+
+# Ada as released (third_party/ada): C++20, without exceptions, RTTI and
+# URLPattern (so no std::regex). Our C calls only its C API, ada_c.h.
+function(add_ada name)
+  add_library(${name} STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ada/ada.cpp)
+  set_target_properties(${name} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+    # Not exported from libp2pml.so, so that the linker drops what is unused.
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+  target_compile_definitions(${name} PRIVATE ADA_INCLUDE_URL_PATTERN=0)
+  target_compile_options(${name} PRIVATE -fno-exceptions -fno-rtti -w)
+  target_include_directories(${name} SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ada)
+endfunction()
 
 add_quickjs(quickjs)
+add_ada(ada)
+# Ada turns on its development checks in a build without NDEBUG, such as an
+# Android debug build; a failed check aborts the process. Only the C tests
+# keep them (ada_sanitized).
+target_compile_definitions(ada PRIVATE ADA_DEVELOPMENT_CHECKS=0)
 
 add_library(p2pml SHARED ${ENGINE_SOURCES} src/jni.c)
 target_include_directories(p2pml PRIVATE src)
-target_link_libraries(p2pml PRIVATE quickjs)
+target_link_libraries(p2pml PRIVATE quickjs ada)
+if(ANDROID)
+  # The static libraries' symbols (libc++, which Ada needs, among them) are
+  # not exported: only the JNI functions are.
+  target_link_options(p2pml PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
 use_our_checks(p2pml)
 
 if(P2PML_HOST)
@@ -107,15 +134,22 @@ if(P2PML_HOST)
   # -O1: at -O0 with ASan, a JS call takes so much of the C stack that
   # QuickJS's limit allows only about 10 nested calls (353 at -O1).
   target_compile_options(quickjs_sanitized PRIVATE ${SANITIZERS} -O1)
-  # The JS tests that engine_test runs, after harness.js.
+  add_ada(ada_sanitized)
+  target_compile_options(ada_sanitized PRIVATE ${SANITIZERS})
+  # The JS tests that engine_test runs, each after the setup scripts: the
+  # harness, then the test data.
+  file(GLOB JS_TEST_DATA CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/third_party/wpt-url/*_data.js)
+  embed_js(${CMAKE_BINARY_DIR}/test_setup.c p2pml_test_setup
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/js/harness.js ${JS_TEST_DATA})
   file(GLOB JS_TESTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test/js/*_test.js)
-  embed_js(${CMAKE_BINARY_DIR}/test_scripts.c p2pml_test_scripts
-    ${CMAKE_CURRENT_SOURCE_DIR}/test/js/harness.js ${JS_TESTS})
-  add_executable(engine_test test/engine_test.c ${ENGINE_SOURCES} ${CMAKE_BINARY_DIR}/test_scripts.c)
+  embed_js(${CMAKE_BINARY_DIR}/test_scripts.c p2pml_test_scripts ${JS_TESTS})
+  add_executable(engine_test test/engine_test.c ${ENGINE_SOURCES}
+    ${CMAKE_BINARY_DIR}/test_setup.c ${CMAKE_BINARY_DIR}/test_scripts.c)
   target_include_directories(engine_test PRIVATE src)
   target_compile_options(engine_test PRIVATE ${SANITIZERS})
   target_link_options(engine_test PRIVATE ${SANITIZERS})
-  target_link_libraries(engine_test PRIVATE quickjs_sanitized)
+  target_link_libraries(engine_test PRIVATE quickjs_sanitized ada_sanitized)
   use_our_checks(engine_test)
 
   enable_testing()

@@ -12,9 +12,9 @@ that describes the behaviour, not here.
   metadata one version ahead). The oldest Kotlin the library supports is
   decided when publishing is set up, and these two options follow from it.
 - **The licence notices an app must ship are not set up.** The library
-  includes QuickJS (MIT), whose notice must reach the app's users. How the
-  library gives its notices to apps (a file in the AAR, the documentation) is
-  decided when publishing is set up.
+  includes QuickJS (MIT) and Ada (MIT), whose notices must reach the app's
+  users. How the library gives its notices to apps (a file in the AAR, the
+  documentation) is decided when publishing is set up.
 - **The close cannot stop every endless loop.** The engine stops JS with an
   error that JS cannot catch (specs/engine.md, "Closing"), but QuickJS
   changes that error on some paths. An async function, a Promise executor,

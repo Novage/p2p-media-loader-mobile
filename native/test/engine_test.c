@@ -12,7 +12,10 @@
 #include "engine.h"
 #include "polyfills.h"
 
-// test/js/*.js, which CMakeLists.txt builds in: harness.js first.
+// test/js/*_test.js, which CMakeLists.txt builds in, and the setup scripts
+// that run before each: harness.js, then the test data.
+extern const p2pml_script p2pml_test_setup[];
+extern const int p2pml_test_setup_count;
 extern const p2pml_script p2pml_test_scripts[];
 extern const int p2pml_test_scripts_count;
 
@@ -749,32 +752,40 @@ static void test_an_exception_from_a_listener_is_reported(void) {
   free_log(&log);
 }
 
-// Runs each JS test file (test/js) after harness.js, in a new engine. Fails
-// on the first log line, such as the report of a failed test, and when a file
-// runs no test.
+// Runs each JS test file (test/js) after the setup scripts, in a new engine.
+// Fails on the first log line, such as the report of a failed test, and when
+// a file runs no test.
 static void test_js_files(void) {
-  for (int i = 1; i < p2pml_test_scripts_count; i++) {
+  eval_task *setup = calloc((size_t)p2pml_test_setup_count, sizeof *setup);
+  CHECK(setup != NULL);
+  for (int i = 0; i < p2pml_test_scripts_count; i++) {
     p2pml_engine *engine = p2pml_engine_new();
     CHECK(engine != NULL);
-    eval_task harness = {.code = (const char *)p2pml_test_scripts[0].source};
+    for (int j = 0; j < p2pml_test_setup_count; j++) {
+      setup[j] = (eval_task){.code = (const char *)p2pml_test_setup[j].source};
+      post_eval(engine, &setup[j]);
+    }
     eval_task tests = {.code = (const char *)p2pml_test_scripts[i].source};
     eval_task count = {.code = "testsRun"};
-    post_eval(engine, &harness);
     post_eval(engine, &tests);
     post_eval(engine, &count);
     post_close(engine);
     stop(engine, start(engine));
-    if (!harness.ok) {
-      fprintf(stderr, "harness.js threw: %s\n", harness.result.error);
+    for (int j = 0; j < p2pml_test_setup_count; j++) {
+      if (!setup[j].ok) {
+        fprintf(stderr, "%s threw: %s\n", p2pml_test_setup[j].name, setup[j].result.error);
+      }
+      CHECK(setup[j].ok);
+      p2pml_eval_result_free(&setup[j].result);
     }
     if (!tests.ok) {
       fprintf(stderr, "%s threw: %s\n", p2pml_test_scripts[i].name, tests.result.error);
     }
-    CHECK(harness.ok && tests.ok && count.ok && atoi(count.result.value) > 0);
-    p2pml_eval_result_free(&harness.result);
+    CHECK(tests.ok && count.ok && atoi(count.result.value) > 0);
     p2pml_eval_result_free(&tests.result);
     p2pml_eval_result_free(&count.result);
   }
+  free(setup);
 }
 
 int main(void) {
