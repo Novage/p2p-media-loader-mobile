@@ -71,6 +71,10 @@ globalThis.assertThrows = (type, body, what = "call") => {
   throw new Error(`${what}: expected a ${type.name}, nothing thrown`);
 };
 
+// Waits until the tasks posted before it have run, such as the events of a
+// fake client.
+globalThis.tasksRun = () => new Promise((resolve) => setTimeout(resolve, 10));
+
 // Bytes as hex, such as "61 c3 a9", for assertEquals.
 globalThis.hex = (bytes) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");

@@ -1,7 +1,11 @@
-// WebIDL helpers that the polyfills after this one share through the natives.
-// A DOMString needs no helper: a template literal converts as WebIDL does (a
-// Symbol throws).
+// WebIDL helpers that the polyfills after this one share through the natives,
+// and the HTTP token test. A DOMString needs no helper: a template literal
+// converts as WebIDL does (a Symbol throws).
 (natives) => {
+  // An HTTP token (RFC 9110): a header name, a method or a subprotocol.
+  const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+  natives.isHttpToken = (text) => TOKEN.test(text);
+
   // WebIDL's object test: a function is an object too.
   natives.isObject = (value) =>
     (typeof value === "object" && value !== null) ||
@@ -9,6 +13,25 @@
 
   // A USVString: a DOMString with U+FFFD for each lone surrogate.
   natives.usvString = (value) => `${value}`.toWellFormed();
+
+  // An unsigned long: ToNumber, then modulo 2^32 (NaN and Infinity are 0).
+  natives.unsignedLong = (value) => +value >>> 0;
+
+  // An unsigned short: ToNumber, then modulo 2^16 (NaN and Infinity are 0).
+  natives.unsignedShort = (value) => (+value >>> 0) & 0xffff;
+
+  // A [Clamp] unsigned short: NaN is 0; then into 0-65535; then the nearest
+  // integer, a half to the even one.
+  natives.clampedUnsignedShort = (value) => {
+    const number = +value;
+    if (Number.isNaN(number)) return 0;
+    const clamped = Math.min(Math.max(number, 0), 0xffff);
+    const floor = Math.floor(clamped);
+    const fraction = clamped - floor;
+    if (fraction > 0.5 || (fraction === 0.5 && floor % 2 === 1))
+      return floor + 1;
+    return floor;
+  };
 
   // WebIDL counts the arguments: a missing required one throws. The caller
   // passes its `arguments.length`.

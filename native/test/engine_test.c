@@ -12,6 +12,7 @@
 #include "engine.h"
 #include "http.h"
 #include "polyfills.h"
+#include "websocket.h"
 
 // test/js/*_test.js, which CMakeLists.txt builds in, and the setup scripts
 // that run before each: harness.js, then the test data.
@@ -74,12 +75,12 @@ typedef struct {
 // fakeHttp.cancelled, and counts the cancels here.
 static atomic_int fake_cancels;
 
-// Calls fakeHttp[array].push(value); `value` is taken. Does nothing before
-// add_test_globals.
-static void push_to_fake(JSContext *context, const char *array, JSValue value) {
+// Calls <fake>[array].push(value) on the global `fake`; `value` is taken.
+// Does nothing before add_test_globals.
+static void push_to(JSContext *context, const char *name, const char *array, JSValue value) {
   JSValue global = JS_GetGlobalObject(context);
-  JSValue fake = JS_GetPropertyStr(context, global, "fakeHttp");
-  // Without fakeHttp, a get from undefined would leave a TypeError pending.
+  JSValue fake = JS_GetPropertyStr(context, global, name);
+  // Without the fake, a get from undefined would leave a TypeError pending.
   JSValue list = JS_IsObject(fake) ? JS_GetPropertyStr(context, fake, array) : JS_UNDEFINED;
   if (JS_IsArray(context, list)) {
     JSValue length = JS_GetPropertyStr(context, list, "length");
@@ -95,6 +96,61 @@ static void push_to_fake(JSContext *context, const char *array, JSValue value) {
   JS_FreeValue(context, global);
 }
 
+// The fake WebSocket client of every test engine: fakeWs.opened, sent,
+// closed and cancelled record its calls; the cancels are counted here.
+static atomic_int fake_ws_cancels;
+
+// A new Uint8Array of a copy of `bytes`.
+static JSValue bytes_value(JSContext *context, const uint8_t *bytes, size_t length) {
+  JSValue buffer = JS_NewArrayBufferCopy(context, bytes, length);
+  JSValueConst typed[] = {buffer, JS_UNDEFINED, JS_UNDEFINED};
+  JSValue array = JS_NewTypedArray(context, 3, typed, JS_TYPED_ARRAY_UINT8);
+  JS_FreeValue(context, buffer);
+  return array;
+}
+
+static void fake_ws_open(void *data, int32_t id, const char *url, size_t protocol_count,
+                         const char *const *protocols) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue socket = JS_NewObject(context);
+  JSValue list = JS_NewArray(context);
+  for (size_t i = 0; i < protocol_count; i++) {
+    CHECK(JS_SetPropertyUint32(context, list, (uint32_t)i, JS_NewString(context, protocols[i])) >=
+          0);
+  }
+  CHECK(JS_SetPropertyStr(context, socket, "id", JS_NewInt32(context, id)) >= 0);
+  CHECK(JS_SetPropertyStr(context, socket, "url", JS_NewString(context, url)) >= 0);
+  CHECK(JS_SetPropertyStr(context, socket, "protocols", list) >= 0);
+  push_to(context, "fakeWs", "opened", socket);
+}
+
+static void fake_ws_send(void *data, int32_t id, bool binary, const uint8_t *bytes, size_t length) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue sent = JS_NewObject(context);
+  CHECK(JS_SetPropertyStr(context, sent, "id", JS_NewInt32(context, id)) >= 0);
+  CHECK(JS_SetPropertyStr(context, sent, "data",
+                          binary ? bytes_value(context, bytes, length)
+                                 : JS_NewStringLen(context, (const char *)bytes, length)) >= 0);
+  push_to(context, "fakeWs", "sent", sent);
+}
+
+static void fake_ws_close(void *data, int32_t id, int code, const uint8_t *reason,
+                          size_t reason_length) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue closed = JS_NewObject(context);
+  CHECK(JS_SetPropertyStr(context, closed, "id", JS_NewInt32(context, id)) >= 0);
+  CHECK(JS_SetPropertyStr(context, closed, "code", JS_NewInt32(context, code)) >= 0);
+  CHECK(JS_SetPropertyStr(context, closed, "reason",
+                          JS_NewStringLen(context, (const char *)reason, reason_length)) >= 0);
+  push_to(context, "fakeWs", "closed", closed);
+}
+
+static void fake_ws_cancel(void *data, int32_t id) {
+  atomic_fetch_add(&fake_ws_cancels, 1);
+  push_to(p2pml_engine_context(data), "fakeWs", "cancelled",
+          JS_NewInt32(p2pml_engine_context(data), id));
+}
+
 static void fake_start(void *data, int32_t id, const char *method, const char *url,
                        size_t header_count, const char *const *headers) {
   JSContext *context = p2pml_engine_context(data);
@@ -108,20 +164,25 @@ static void fake_start(void *data, int32_t id, const char *method, const char *u
   CHECK(JS_SetPropertyStr(context, request, "method", JS_NewString(context, method)) >= 0);
   CHECK(JS_SetPropertyStr(context, request, "url", JS_NewString(context, url)) >= 0);
   CHECK(JS_SetPropertyStr(context, request, "headers", names) >= 0);
-  push_to_fake(context, "started", request);
+  push_to(context, "fakeHttp", "started", request);
 }
 
 static void fake_cancel(void *data, int32_t id) {
   atomic_fetch_add(&fake_cancels, 1);
-  push_to_fake(p2pml_engine_context(data), "cancelled",
-               JS_NewInt32(p2pml_engine_context(data), id));
+  push_to(p2pml_engine_context(data), "fakeHttp", "cancelled",
+          JS_NewInt32(p2pml_engine_context(data), id));
 }
 
 static void *run_engine(void *data) {
   run_args *args = data;
   p2pml_http_client fake = {.start = fake_start, .cancel = fake_cancel, .data = args->engine};
+  p2pml_ws_client fake_ws = {.open = fake_ws_open,
+                             .send = fake_ws_send,
+                             .close = fake_ws_close,
+                             .cancel = fake_ws_cancel,
+                             .data = args->engine};
   CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log,
-                         &fake));
+                         &fake, &fake_ws));
   free(args);
   return NULL;
 }
@@ -361,6 +422,17 @@ static JSValue run_gc(JSContext *context, JSValueConst this_value, int argc, JSV
   return JS_UNDEFINED;
 }
 
+// The bytes of Uint8Array `value`, valid while it lives.
+static const uint8_t *typed_array_bytes(JSContext *context, JSValueConst value, size_t *length) {
+  size_t offset = 0;
+  size_t size = 0;
+  JSValue buffer = JS_GetTypedArrayBuffer(context, value, &offset, length, NULL);
+  CHECK(!JS_IsException(buffer));
+  const uint8_t *bytes = JS_GetArrayBuffer(context, &size, buffer);
+  JS_FreeValue(context, buffer);
+  return bytes + offset;
+}
+
 // The fake client's events, from JS, through the platform's functions:
 // fakeHttp.respond(id, status, statusText, url, [name, value, ...]),
 // fakeHttp.data(id, Uint8Array), fakeHttp.end(id) and fakeHttp.fail(id,
@@ -397,14 +469,9 @@ static JSValue fake_event(JSContext *context, JSValueConst this_value, int argc,
     JS_FreeCString(context, url);
     JS_FreeCString(context, text);
   } else if (kind == 1) {
-    size_t offset = 0;
     size_t length = 0;
-    size_t size = 0;
-    JSValue buffer = JS_GetTypedArrayBuffer(context, argv[1], &offset, &length, NULL);
-    CHECK(!JS_IsException(buffer));
-    uint8_t *bytes = JS_GetArrayBuffer(context, &size, buffer);
-    posted = p2pml_http_data(engine, id, bytes + offset, length);
-    JS_FreeValue(context, buffer);
+    const uint8_t *bytes = typed_array_bytes(context, argv[1], &length);
+    posted = p2pml_http_data(engine, id, bytes, length);
   } else if (kind == 2) {
     posted = p2pml_http_end(engine, id);
   } else {
@@ -416,6 +483,54 @@ static JSValue fake_event(JSContext *context, JSValueConst this_value, int argc,
   return JS_NewBool(context, posted);
 }
 
+// The fake WebSocket client's events, from JS, as the HTTP ones:
+// fakeWs.open(id, protocol, extensions), fakeWs.message(id, data) with a
+// string (text) or a Uint8Array (binary), and fakeWs.close(id, code, reason,
+// wasClean, failed).
+static JSValue fake_ws_event(JSContext *context, JSValueConst this_value, int argc,
+                             JSValueConst *argv, int kind) {
+  (void)this_value;
+  (void)argc;
+  p2pml_engine *engine = JS_GetContextOpaque(context);
+  int32_t id = 0;
+  CHECK(JS_ToInt32(context, &id, argv[0]) == 0);
+  bool posted = false;
+  if (kind == 0) {
+    const char *protocol = JS_ToCString(context, argv[1]);
+    const char *extensions = JS_ToCString(context, argv[2]);
+    CHECK(protocol != NULL && extensions != NULL);
+    posted = p2pml_ws_open(engine, id, protocol, extensions);
+    JS_FreeCString(context, extensions);
+    JS_FreeCString(context, protocol);
+  } else if (kind == 1 && JS_IsString(argv[1])) {
+    size_t length = 0;
+    const char *text = JS_ToCStringLen(context, &length, argv[1]);
+    CHECK(text != NULL);
+    posted = p2pml_ws_message(engine, id, false, (const uint8_t *)text, length);
+    JS_FreeCString(context, text);
+  } else if (kind == 1) {
+    size_t length = 0;
+    const uint8_t *bytes = typed_array_bytes(context, argv[1], &length);
+    posted = p2pml_ws_message(engine, id, true, bytes, length);
+  } else {
+    int32_t code = 0;
+    CHECK(JS_ToInt32(context, &code, argv[1]) == 0);
+    size_t length = 0;
+    const char *reason = JS_ToCStringLen(context, &length, argv[2]);
+    CHECK(reason != NULL);
+    posted = p2pml_ws_close(engine, id, code, (const uint8_t *)reason, length,
+                            JS_ToBool(context, argv[3]), JS_ToBool(context, argv[4]));
+    JS_FreeCString(context, reason);
+  }
+  return JS_NewBool(context, posted);
+}
+
+static const JSCFunctionListEntry fake_ws_functions[] = {
+    JS_CFUNC_MAGIC_DEF("open", 3, fake_ws_event, 0),
+    JS_CFUNC_MAGIC_DEF("message", 2, fake_ws_event, 1),
+    JS_CFUNC_MAGIC_DEF("close", 5, fake_ws_event, 2),
+};
+
 static const JSCFunctionListEntry fake_http_functions[] = {
     JS_CFUNC_MAGIC_DEF("respond", 5, fake_event, 0),
     JS_CFUNC_MAGIC_DEF("data", 2, fake_event, 1),
@@ -424,7 +539,7 @@ static const JSCFunctionListEntry fake_http_functions[] = {
 };
 
 // Gives the script a global mark() that sets `marked`, closeEngine(),
-// runGc(), and fakeHttp, the fake HTTP client's records and events.
+// runGc(), and fakeHttp and fakeWs, the fake clients' records and events.
 static void add_test_globals(p2pml_engine *engine, void *data) {
   (void)data;
   engine_to_close = engine;
@@ -440,6 +555,14 @@ static void add_test_globals(p2pml_engine *engine, void *data) {
   JS_SetPropertyStr(context, fake, "started", JS_NewArray(context));
   JS_SetPropertyStr(context, fake, "cancelled", JS_NewArray(context));
   JS_SetPropertyStr(context, global, "fakeHttp", fake);
+  JSValue fake_ws = JS_NewObject(context);
+  JS_SetPropertyFunctionList(context, fake_ws, fake_ws_functions,
+                             (int)(sizeof fake_ws_functions / sizeof fake_ws_functions[0]));
+  JS_SetPropertyStr(context, fake_ws, "opened", JS_NewArray(context));
+  JS_SetPropertyStr(context, fake_ws, "sent", JS_NewArray(context));
+  JS_SetPropertyStr(context, fake_ws, "closed", JS_NewArray(context));
+  JS_SetPropertyStr(context, fake_ws, "cancelled", JS_NewArray(context));
+  JS_SetPropertyStr(context, global, "fakeWs", fake_ws);
   JS_FreeValue(context, global);
 }
 
@@ -912,6 +1035,51 @@ static void test_an_event_that_js_cannot_take_fails_the_request(void) {
   free_log(&log);
 }
 
+// A close stops each socket that is still open, through the client; not one
+// that closed.
+static void test_the_close_stops_open_sockets(void) {
+  atomic_store(&fake_ws_cancels, 0);
+  run_script("new WebSocket('wss://example.com/a');"
+             "const closed = new WebSocket('wss://example.com/b');"
+             "closed.onclose = closeEngine;"
+             "const { id } = fakeWs.opened[1];"
+             "fakeWs.open(id, '', '');"
+             "fakeWs.close(id, 1000, '', true, false);",
+             NULL);
+  CHECK(atomic_load(&fake_ws_cancels) == 1);
+}
+
+// A message that JS cannot take fails its socket, and stops it: JS does not
+// go on as if it got every message.
+static void test_a_message_that_js_cannot_take_fails_the_socket(void) {
+  atomic_store(&fake_ws_cancels, 0);
+  captured_log log = {0};
+  run_script("const typedArray = Object.getPrototypeOf(Uint8Array.prototype);"
+             "const buffer = Object.getOwnPropertyDescriptor(typedArray, 'buffer');"
+             // websocket.js's listener reads it for each binary message.
+             "Object.defineProperty(typedArray, 'buffer', {"
+             "  get() { throw new Error('no buffer'); }, configurable: true });"
+             "const socket = new WebSocket('wss://example.com/a');"
+             "socket.onmessage = () => console.log('message');"
+             "socket.onerror = () => console.log('error');"
+             "socket.onclose = (event) => {"
+             "  console.log('close ' + event.code + ' ' + event.wasClean);"
+             "  Object.defineProperty(typedArray, 'buffer', buffer);"
+             "  closeEngine();"
+             "};"
+             "const { id } = fakeWs.opened[0];"
+             "fakeWs.open(id, '', '');"
+             "fakeWs.message(id, new Uint8Array([1]));"
+             "fakeWs.message(id, 'after');",
+             &log);
+  CHECK(log.count == 3);
+  check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught Error: no buffer", false);
+  check_line(&log, 1, P2PML_LOG_INFO, "error", true);
+  check_line(&log, 2, P2PML_LOG_INFO, "close 1006 false", true);
+  CHECK(atomic_load(&fake_ws_cancels) == 1);
+  free_log(&log);
+}
+
 // An event after the close is not taken, and its copy is freed (ASan).
 static void test_an_event_after_the_close_is_freed(void) {
   p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
@@ -924,6 +1092,9 @@ static void test_an_event_after_the_close_is_freed(void) {
   CHECK(!p2pml_http_data(engine, 1, bytes, sizeof bytes));
   CHECK(!p2pml_http_end(engine, 1));
   CHECK(!p2pml_http_fail(engine, 1, "late"));
+  CHECK(!p2pml_ws_open(engine, 1, "chat", ""));
+  CHECK(!p2pml_ws_message(engine, 1, true, bytes, sizeof bytes));
+  CHECK(!p2pml_ws_close(engine, 1, 1000, bytes, sizeof bytes, true, false));
   p2pml_engine_free(engine);
 }
 
@@ -1000,6 +1171,8 @@ int main(void) {
   test_an_exception_from_a_listener_is_reported();
   test_the_close_cancels_open_requests();
   test_an_event_after_the_close_is_freed();
+  test_the_close_stops_open_sockets();
+  test_a_message_that_js_cannot_take_fails_the_socket();
   test_an_event_that_js_cannot_take_fails_the_request();
   test_js_files();
   puts("engine tests passed");

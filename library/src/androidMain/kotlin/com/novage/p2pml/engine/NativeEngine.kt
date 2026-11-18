@@ -4,6 +4,8 @@ package com.novage.p2pml.engine
  * The JNI functions of `native/src/jni.c` over `native/src/engine.h`. An engine is a handle that
  * [create] returns; [JsEngine] owns it and keeps the rules of engine.h.
  */
+// One function for each JNI entry point of jni.c.
+@Suppress("TooManyFunctions")
 internal object NativeEngine {
     init {
         System.loadLibrary("p2pml")
@@ -17,10 +19,10 @@ internal object NativeEngine {
 
     /**
      * Blocks until the engine is closed, and writes the engine's lines to [log] meanwhile; the
-     * requests of `fetch` go to [http]. False if the runtime or its globals could not be created,
-     * and no close came first.
+     * requests of `fetch` go to [http], and the sockets of `WebSocket` to [ws]. False if the
+     * runtime or its globals could not be created, and no close came first.
      */
-    @JvmStatic external fun run(engine: Long, log: LogSink, http: HttpSink): Boolean
+    @JvmStatic external fun run(engine: Long, log: LogSink, http: HttpSink, ws: WsSink): Boolean
 
     /** False once the engine is closed, or when out of memory. */
     @JvmStatic external fun post(engine: Long, task: Runnable): Boolean
@@ -58,6 +60,30 @@ internal object NativeEngine {
 
     @JvmStatic external fun httpFail(engine: Long, id: Int, message: String): Boolean
 
+    /**
+     * The events of socket [id] of `WebSocket`, as [httpResponse]'s (native/src/websocket.h).
+     * [protocol] and [extensions] are ASCII.
+     */
+    @JvmStatic
+    external fun wsOpen(engine: Long, id: Int, protocol: String, extensions: String): Boolean
+
+    /** [bytes] are UTF-8 text unless [binary]. */
+    @JvmStatic
+    external fun wsMessage(engine: Long, id: Int, binary: Boolean, bytes: ByteArray): Boolean
+
+    /** [reason] is UTF-8. */
+    // Its parameters are those of p2pml_ws_close (native/src/websocket.h).
+    @Suppress("LongParameterList")
+    @JvmStatic
+    external fun wsClose(
+        engine: Long,
+        id: Int,
+        code: Int,
+        reason: ByteArray,
+        wasClean: Boolean,
+        failed: Boolean,
+    ): Boolean
+
     /** Takes the engine's lines on the engine thread. [level] is a [JsLog.Level]'s ordinal. */
     fun interface LogSink {
         fun write(level: Int, message: String)
@@ -67,6 +93,21 @@ internal object NativeEngine {
     interface HttpSink {
         /** [headers] are names and values, in turn. */
         fun start(id: Int, method: String, url: String, headers: Array<String>)
+
+        fun cancel(id: Int)
+    }
+
+    /**
+     * The platform's WebSocket client, on the engine thread (native/src/websocket.h). Text and
+     * reasons are UTF-8 bytes: JNI's strings are modified UTF-8.
+     */
+    interface WsSink {
+        fun open(id: Int, url: String, protocols: Array<String>)
+
+        fun send(id: Int, binary: Boolean, bytes: ByteArray)
+
+        /** [code] is -1 for none. */
+        fun close(id: Int, code: Int, reason: ByteArray)
 
         fun cancel(id: Int)
     }

@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "engine.h"
 #include "quickjs.h"
@@ -16,6 +17,7 @@
 // The channels of an engine.
 typedef enum {
   P2PML_CHANNEL_HTTP,
+  P2PML_CHANNEL_WS,
   P2PML_CHANNEL_COUNT,
 } p2pml_channel_id;
 
@@ -43,6 +45,11 @@ typedef struct {
   const void *pointer;
   size_t length;
 } p2pml_arg;
+
+// A string argument of NUL-terminated `text`.
+static inline p2pml_arg p2pml_text_arg(const char *text) {
+  return (p2pml_arg){.type = P2PML_ARG_STRING, .pointer = text, .length = strlen(text)};
+}
 
 // What a channel does with its events. The names are NULL-terminated lists,
 // and the two lists share no name (an ending event that JS did not take would
@@ -86,6 +93,13 @@ int32_t p2pml_channel_add(p2pml_channel *channel);
 bool p2pml_channel_cancel(p2pml_channel *channel, int32_t id);
 // The function that gets every event; `listener` stays the caller's.
 void p2pml_channel_listen(p2pml_channel *channel, JSContext *context, JSValueConst listener);
+// The strings of JS array `array`, as a new array of `*count` C strings (the
+// opposite of P2PML_ARG_STRINGS), for p2pml_strings_free. NULL, with a JS
+// exception, when a conversion fails or when out of memory. `array` stays the
+// caller's.
+const char **p2pml_strings_new(JSContext *context, JSValueConst array, uint32_t *count);
+// Frees the strings of p2pml_strings_new.
+void p2pml_strings_free(JSContext *context, const char **strings, uint32_t count);
 // The engine's channel `which` (engine.c).
 p2pml_channel *p2pml_engine_channel(p2pml_engine *engine, p2pml_channel_id which);
 

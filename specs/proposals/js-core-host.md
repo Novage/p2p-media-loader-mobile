@@ -77,6 +77,13 @@ sample app (5.56 MB to 5.98 MB). On the OnePlus 7, a 20 MB body went through
 `fetch` at 34 to 40 MiB/s in the device test's debug build (three runs),
 about 50 times the bitrate of 1080p.
 
+Step 2.3b added `WebSocket`, over Ktor's `WebSockets` plugin on the same
+client, so the network row is complete. The core opens no tracker socket
+while the page has no `RTCPeerConnection` (it turns P2P off), so the core
+connects to its trackers only with WebRTC (step 2.4b); the tests give it a
+stub `RTCPeerConnection` to see its first announce, which needs no peer
+connection.
+
 Not needed: `queueMicrotask`, because the core has its own function of that
 name, and `RTCIceCandidate`, because the core sends the whole SDP through the
 tracker and does not trickle candidates.

@@ -7,9 +7,6 @@ const URL_A = "https://example.com/a";
 
 const lastStarted = () => fakeHttp.started[fakeHttp.started.length - 1];
 
-// Waits until the tasks posted before it have run.
-const tasksRun = () => new Promise((resolve) => setTimeout(resolve, 10));
-
 // Reads a body to its end: its chunks as hex strings, such as "01 02 03".
 const readAll = async (body) => {
   const reader = body.getReader();

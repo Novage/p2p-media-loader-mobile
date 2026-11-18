@@ -19,3 +19,9 @@
     void start(int, java.lang.String, java.lang.String, java.lang.String[]);
     void cancel(int);
 }
+-keep interface com.novage.p2pml.engine.NativeEngine$WsSink {
+    void open(int, java.lang.String, java.lang.String[]);
+    void send(int, boolean, byte[]);
+    void close(int, int, byte[]);
+    void cancel(int);
+}

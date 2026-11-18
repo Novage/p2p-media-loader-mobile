@@ -7,18 +7,19 @@ the rules for the code that calls it.
 
 ## Where the code is
 
-| Part                                   | Code                                                                        |
-| -------------------------------------- | --------------------------------------------------------------------------- |
-| QuickJS, Bellard's release as released | `native/third_party/quickjs/` (version in its README.md)                    |
-| The engine: the loop, globals, eval    | `native/src/engine.h`, `native/src/engine.c`                                |
-| The polyfills: JS, and their C helpers | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c` |
-| URL parsing: Ada (C++), and its C glue | `native/third_party/ada/` (version in its README.md), `native/src/url.c`    |
-| The web core's bundle, as a module     | `native/package.json` (the npm package), `native/src/modules.c`             |
-| The channels of the network's items    | `native/src/channel.h`, `native/src/channel.c`                              |
-| fetch: the requests, and their events  | `native/src/http.h`, `native/src/http.c`, `native/src/polyfills/fetch.js`   |
-| fetch's HTTP client, over Ktor         | `library/src/commonMain/…/http/HttpBridge.kt`                               |
-| The JNI glue, nothing else             | `native/src/jni.c`                                                          |
-| The engine for Kotlin                  | `library/src/androidMain/…/engine/JsEngine.kt`                              |
+| Part                                     | Code                                                                                    |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| QuickJS, Bellard's release as released   | `native/third_party/quickjs/` (version in its README.md)                                |
+| The engine: the loop, globals, eval      | `native/src/engine.h`, `native/src/engine.c`                                            |
+| The polyfills: JS, and their C helpers   | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c`             |
+| URL parsing: Ada (C++), and its C glue   | `native/third_party/ada/` (version in its README.md), `native/src/url.c`                |
+| The web core's bundle, as a module       | `native/package.json` (the npm package), `native/src/modules.c`                         |
+| The channels of the network's items      | `native/src/channel.h`, `native/src/channel.c`                                          |
+| fetch: the requests, and their events    | `native/src/http.h`, `native/src/http.c`, `native/src/polyfills/fetch.js`               |
+| WebSocket: the sockets, and their events | `native/src/websocket.h`, `native/src/websocket.c`, `native/src/polyfills/websocket.js` |
+| The network clients, over Ktor           | `library/src/commonMain/…/http/HttpBridge.kt`, `WsBridge.kt`                            |
+| The JNI glue, nothing else               | `native/src/jni.c`                                                                      |
+| The engine for Kotlin                    | `library/src/androidMain/…/engine/JsEngine.kt`                                          |
 
 The engine is plain C, so that iOS calls the same code through cinterop, and
 native libraries such as libdatachannel call it with no JNI. The C code,
@@ -153,6 +154,36 @@ does not have. They are in C or in the built-in JS polyfills (see
   - Absent, as the core does not use them: a request body, `clone()`,
     `json()`, `blob()`, `formData()`, `Response`'s constructor and static
     methods, cookies and the HTTP cache.
+- **`WebSocket`** of the WebSockets Standard, with **`MessageEvent`** and
+  **`CloseEvent`** of the HTML Standard, for the core's trackers. The
+  platform's WebSocket client does the network work (see "The platform's
+  network clients").
+  - `new WebSocket(url, protocols)`: `ws:` and `wss:`, and `http:` and
+    `https:`, which become `ws:` and `wss:`. Another scheme, a fragment, a
+    subprotocol that is not an HTTP token, or one that is there twice, throws
+    a `SyntaxError` `DOMException`.
+  - `url`, `readyState` and its constants, `protocol` and `extensions` (the
+    server's), `bufferedAmount`, `binaryType`, `send`, `close`, and the
+    `onopen`, `onmessage`, `onerror` and `onclose` handlers.
+  - `binaryType` is `"blob"` by default, as in a browser, but a binary
+    message is always an `ArrayBuffer`: there is no `Blob`. The core sets
+    `"arraybuffer"`.
+  - `send(data)`: a string goes as UTF-8 text, an `ArrayBuffer` or a view as
+    binary. While connecting it throws an `InvalidStateError`. After the
+    close starts, the data is dropped and counts in `bufferedAmount`, as in a
+    browser; else `bufferedAmount` is 0, because the platform queues.
+  - `close(code, reason)`: a code other than 1000 or 3000–4999 throws an
+    `InvalidAccessError`, a reason over 123 bytes of UTF-8 a `SyntaxError`.
+    While connecting, it fails the connection: `error`, then `close` with
+    1006, in a later task. With no code, the close frame has 1000 (OkHttp
+    always sends a code; a browser sends none).
+  - A failed connection, or one the network cuts, fires `error` (an `Event`),
+    then `close` with 1006, not clean. A message's `origin` is the URL's
+    origin.
+  - The handshake sends `navigator.userAgent` as `User-Agent`, and no
+    `Origin`: there is no page. There are no pings, as in a browser.
+  - Not checked, as the core asks for no subprotocol: that the server's
+    subprotocol is one that the socket asked for.
 
 ## Polyfills
 
@@ -223,8 +254,36 @@ task, so JS gets it on the engine thread, after the tasks before it.
   request fails as a network error. The library's manifest asks only for
   `INTERNET`; only its device-test APK allows cleartext, for its local
   server.
-- **OkHttp 5 needs API 37:** apps that use the library compile against
-  Android API 37 or later (`minCompileSdk`).
+
+For `WebSocket`, the engine calls the platform's client (`p2pml_ws_client` in
+`native/src/websocket.h`) on the engine thread, to open a socket (URL and
+subprotocols), send a message, start the closing handshake, and stop a
+socket. The platform gives the socket's events from any thread: an open (the
+server's subprotocol and extensions), any messages, then a close (code,
+reason, whether it was clean, whether the connection failed). An open or a
+message that JS cannot take fails the socket (JS gets `error`, then `close`
+with 1006), so that JS never goes on as if it got every message. A `close()`
+while connecting, such a failure, and the close of the engine stop a socket:
+no event of the platform reaches JS after that, but the platform can still
+send a close frame of any code.
+
+- **Text with invalid UTF-8** from the server: on Android, OkHttp decodes it
+  with U+FFFD. A browser fails the connection: JS gets `error`, then `close`
+  with 1006, and the server gets 1007.
+- **Text** crosses JNI as UTF-8 bytes, in both directions: JNI's strings
+  are modified UTF-8, which differs above U+FFFF (a peer id in a tracker
+  message can hold any code point).
+- **Android and iOS:** the client is `WsBridge`, over Ktor's `WebSockets`
+  plugin on the same client as `fetch`: a coroutine per socket. OkHttp's
+  read timeout does not count the time between frames, so a tracker that is
+  silent for minutes does not fail the socket; a frame that stalls for 30 s
+  does. A stop cancels the socket's coroutine:
+  Ktor then sends a close frame (code 1011, or 1000, as its cancel goes),
+  also after a handshake that was still running, and on Android OkHttp waits
+  up to 60 s for the server's answer.
+
+Both clients run over OkHttp 5 on Android, which needs API 37: apps that use
+the library compile against Android API 37 or later (`minCompileSdk`).
 
 ## Modules
 

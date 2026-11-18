@@ -12,6 +12,7 @@
 
 typedef struct p2pml_engine p2pml_engine;
 typedef struct p2pml_http_client p2pml_http_client;
+typedef struct p2pml_ws_client p2pml_ws_client;
 
 // Runs a posted task on the engine thread. The task owns `data` from here on.
 typedef void p2pml_task_run(p2pml_engine *engine, void *data);
@@ -42,12 +43,12 @@ p2pml_engine *p2pml_engine_new(const char *user_agent);
 // returns after p2pml_engine_close. Creates the QuickJS runtime and the
 // globals (specs/engine.md, "Globals") on entry and frees them on return; JS
 // can import the built-in modules ("Modules"). The engine writes its lines
-// through `log`. `http` is the platform's HTTP client for fetch
-// (src/http.h), copied. Returns false if the runtime or its globals cannot be
-// created, unless a close came first: then it stopped them. The engine is
-// then closed. Call it once.
+// through `log`. `http` and `ws` are the platform's clients for fetch
+// (src/http.h) and WebSocket (src/websocket.h), copied. Returns false if the runtime or its globals
+// cannot be created, unless a close came first: then it stopped them. The engine is then closed.
+// Call it once.
 bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data,
-                      const p2pml_http_client *http);
+                      const p2pml_http_client *http, const p2pml_ws_client *ws);
 
 // Adds a task to the end of the queue. Any thread. Returns false, and keeps
 // `data` with the caller, once the engine is closed or when out of memory.

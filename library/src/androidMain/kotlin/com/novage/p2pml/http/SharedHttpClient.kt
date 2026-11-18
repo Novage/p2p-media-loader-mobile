@@ -2,16 +2,17 @@ package com.novage.p2pml.http
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.websocket.WebSockets
 import java.util.concurrent.TimeUnit
 import okhttp3.Dispatcher
 
 /**
- * The HTTP client of every engine's `fetch`: one per process, so that the engines share its
- * connections. See specs/engine.md, "The platform's network clients".
+ * The HTTP client of every engine's `fetch` and `WebSocket`: one per process, so that the engines
+ * share its connections. See specs/engine.md, "The platform's network clients".
  */
 internal object SharedHttpClient {
     // Up to 6 requests at once to one host, as a browser; OkHttp counts a request until its
-    // headers arrive.
+    // headers arrive, and an open WebSocket until it closes (trackers are other hosts).
     private const val MAX_REQUESTS_PER_HOST = 6
     private const val CONNECT_TIMEOUT_SECONDS = 10L
     // Far above the core's default timeouts (3 s with no bytes, 10 s to the first byte): it ends a
@@ -25,6 +26,8 @@ internal object SharedHttpClient {
             // A response of any status is a response, as fetch gives it.
             expectSuccess = false
             followRedirects = true
+            // With no pings, as a browser.
+            install(WebSockets)
             engine {
                 config {
                     connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)

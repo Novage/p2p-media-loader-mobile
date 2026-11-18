@@ -3,19 +3,29 @@ package com.novage.p2pml.engine
 import com.novage.p2pml.http.HttpBridge
 import com.novage.p2pml.http.HttpEvents
 import com.novage.p2pml.http.SharedHttpClient
+import com.novage.p2pml.http.WsBridge
+import com.novage.p2pml.http.WsEvents
 import java.util.concurrent.TimeUnit
 
 /**
  * A QuickJS engine on a thread of its own, which runs posted tasks and JS timers one at a time.
  * Only the engine thread touches the JS runtime: tasks call [evaluateScript]. JS gets [userAgent]
- * as `navigator.userAgent`, such as [libraryUserAgent], and `fetch` over [SharedHttpClient].
- * Console lines and uncaught JS errors go to [log]. See specs/engine.md.
+ * as `navigator.userAgent`, such as [libraryUserAgent], and `fetch` and `WebSocket` over
+ * [SharedHttpClient]. Console lines and uncaught JS errors go to [log]. See specs/engine.md.
  */
 internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat) {
     private val lock = Any()
     // The requests of fetch. Before the thread starts: the engine thread uses it.
     private val http =
         HttpBridge({ SharedHttpClient.client }, Delivery(), onEngine = { block -> post(block) })
+    // The sockets of WebSocket, as [http].
+    private val ws =
+        WsBridge(
+            { SharedHttpClient.client },
+            userAgent,
+            WsDelivery(),
+            onEngine = { block -> post(block) },
+        )
     // Before the native engine, so that a failure here leaves nothing to free.
     private val thread = Thread(null, ::runEngine, "p2pml-engine", STACK_SIZE)
     // Zero once the engine thread has freed the engine. Set by the constructor, then changes only
@@ -88,11 +98,25 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
 
                     override fun cancel(id: Int) = http.cancel(id)
                 }
-            if (!NativeEngine.run(handle, sink, httpSink)) {
+            val wsSink =
+                object : NativeEngine.WsSink {
+                    override fun open(id: Int, url: String, protocols: Array<String>) =
+                        ws.open(id, url, protocols.asList())
+
+                    override fun send(id: Int, binary: Boolean, bytes: ByteArray) =
+                        ws.send(id, binary, bytes)
+
+                    override fun close(id: Int, code: Int, reason: ByteArray) =
+                        ws.close(id, code, reason)
+
+                    override fun cancel(id: Int) = ws.cancel(id)
+                }
+            if (!NativeEngine.run(handle, sink, httpSink, wsSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")
             }
         } finally {
             http.close()
+            ws.close()
             synchronized(lock) {
                 NativeEngine.free(handle)
                 handle = 0
@@ -125,6 +149,23 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
 
         override fun fail(id: Int, message: String) =
             withHandle(false) { NativeEngine.httpFail(it, id, message) }
+    }
+
+    /** Gives the events of WebSocket's sockets to the native engine, from Ktor's threads. */
+    private inner class WsDelivery : WsEvents {
+        override fun open(id: Int, protocol: String, extensions: String) =
+            withHandle(false) { NativeEngine.wsOpen(it, id, protocol, extensions) }
+
+        override fun message(id: Int, binary: Boolean, bytes: ByteArray) =
+            withHandle(false) { NativeEngine.wsMessage(it, id, binary, bytes) }
+
+        override fun close(
+            id: Int,
+            code: Int,
+            reason: ByteArray,
+            wasClean: Boolean,
+            failed: Boolean,
+        ) = withHandle(false) { NativeEngine.wsClose(it, id, code, reason, wasClean, failed) }
     }
 
     // An exception from a task is a defect of the library: report it and let the next task run,

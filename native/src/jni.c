@@ -8,6 +8,7 @@
 
 #include "engine.h"
 #include "http.h"
+#include "websocket.h"
 
 static JavaVM *java_vm;
 static jmethodID runnable_run;
@@ -18,6 +19,10 @@ static jmethodID log_sink_write;
 static jclass string_class;
 static jmethodID http_sink_start;
 static jmethodID http_sink_cancel;
+static jmethodID ws_sink_open;
+static jmethodID ws_sink_send;
+static jmethodID ws_sink_close;
+static jmethodID ws_sink_cancel;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   (void)reserved;
@@ -69,6 +74,19 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
       env, http_sink, "start", "(ILjava/lang/String;Ljava/lang/String;[Ljava/lang/String;)V");
   http_sink_cancel = (*env)->GetMethodID(env, http_sink, "cancel", "(I)V");
   if (string_class == NULL || http_sink_start == NULL || http_sink_cancel == NULL) {
+    return JNI_ERR;
+  }
+  jclass ws_sink = (*env)->FindClass(env, "com/novage/p2pml/engine/NativeEngine$WsSink");
+  if (ws_sink == NULL) {
+    return JNI_ERR;
+  }
+  ws_sink_open =
+      (*env)->GetMethodID(env, ws_sink, "open", "(ILjava/lang/String;[Ljava/lang/String;)V");
+  ws_sink_send = (*env)->GetMethodID(env, ws_sink, "send", "(IZ[B)V");
+  ws_sink_close = (*env)->GetMethodID(env, ws_sink, "close", "(II[B)V");
+  ws_sink_cancel = (*env)->GetMethodID(env, ws_sink, "cancel", "(I)V");
+  if (ws_sink_open == NULL || ws_sink_send == NULL || ws_sink_close == NULL ||
+      ws_sink_cancel == NULL) {
     return JNI_ERR;
   }
   return JNI_VERSION_1_6;
@@ -214,24 +232,90 @@ static void http_start(void *data, int32_t id, const char *method, const char *u
   close_on_exception(env, http->engine);
 }
 
-static void http_cancel(void *data, int32_t id) {
-  engine_sink *http = data;
-  JNIEnv *env = http->env;
+// Calls `cancel`, a method (I)V of the sink, for item `id`.
+static void cancel_with(engine_sink *sink, jmethodID cancel, int32_t id) {
+  JNIEnv *env = sink->env;
   if ((*env)->ExceptionCheck(env)) {
     return;
   }
-  (*env)->CallVoidMethod(env, http->sink, http_sink_cancel, (jint)id);
-  close_on_exception(env, http->engine);
+  (*env)->CallVoidMethod(env, sink->sink, cancel, (jint)id);
+  close_on_exception(env, sink->engine);
 }
+
+static void http_cancel(void *data, int32_t id) { cancel_with(data, http_sink_cancel, id); }
+
+// A new Java byte array of `length` bytes; NULL with an exception.
+static jbyteArray byte_array_of(JNIEnv *env, const uint8_t *bytes, size_t length) {
+  jbyteArray array = (*env)->NewByteArray(env, (jsize)length);
+  if (array != NULL) {
+    (*env)->SetByteArrayRegion(env, array, 0, (jsize)length, (const jbyte *)bytes);
+  }
+  return array;
+}
+
+static void ws_open(void *data, int32_t id, const char *url, size_t protocol_count,
+                    const char *const *protocols) {
+  engine_sink *ws = data;
+  JNIEnv *env = ws->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  // A WHATWG href and HTTP tokens: ASCII, also modified UTF-8.
+  jstring url_text = (*env)->NewStringUTF(env, url);
+  jobjectArray list = url_text != NULL ? strings_of(env, protocol_count, protocols) : NULL;
+  if (list != NULL) {
+    (*env)->CallVoidMethod(env, ws->sink, ws_sink_open, (jint)id, url_text, list);
+  }
+  (*env)->DeleteLocalRef(env, list);
+  (*env)->DeleteLocalRef(env, url_text);
+  close_on_exception(env, ws->engine);
+}
+
+// Text crosses as UTF-8 bytes, not as a jstring: JNI's strings are modified
+// UTF-8, which differs above U+FFFF.
+static void ws_send(void *data, int32_t id, bool binary, const uint8_t *bytes, size_t length) {
+  engine_sink *ws = data;
+  JNIEnv *env = ws->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  jbyteArray array = byte_array_of(env, bytes, length);
+  if (array != NULL) {
+    (*env)->CallVoidMethod(env, ws->sink, ws_sink_send, (jint)id, (jboolean)binary, array);
+  }
+  (*env)->DeleteLocalRef(env, array);
+  close_on_exception(env, ws->engine);
+}
+
+static void ws_close(void *data, int32_t id, int code, const uint8_t *reason,
+                     size_t reason_length) {
+  engine_sink *ws = data;
+  JNIEnv *env = ws->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  jbyteArray array = byte_array_of(env, reason, reason_length);
+  if (array != NULL) {
+    (*env)->CallVoidMethod(env, ws->sink, ws_sink_close, (jint)id, (jint)code, array);
+  }
+  (*env)->DeleteLocalRef(env, array);
+  close_on_exception(env, ws->engine);
+}
+
+static void ws_cancel(void *data, int32_t id) { cancel_with(data, ws_sink_cancel, id); }
 
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv *env, jclass type,
                                                                          jlong handle, jobject sink,
-                                                                         jobject http_sink) {
+                                                                         jobject http_sink,
+                                                                         jobject ws_sink) {
   (void)type;
   engine_sink log = {.env = env, .engine = engine_of(handle), .sink = sink};
   engine_sink http = {.env = env, .engine = log.engine, .sink = http_sink};
-  p2pml_http_client client = {.start = http_start, .cancel = http_cancel, .data = &http};
-  return p2pml_engine_run(log.engine, write_log, &log, &client);
+  engine_sink ws = {.env = env, .engine = log.engine, .sink = ws_sink};
+  p2pml_http_client http_client = {.start = http_start, .cancel = http_cancel, .data = &http};
+  p2pml_ws_client ws_client = {
+      .open = ws_open, .send = ws_send, .close = ws_close, .cancel = ws_cancel, .data = &ws};
+  return p2pml_engine_run(log.engine, write_log, &log, &http_client, &ws_client);
 }
 
 static void free_texts(char **texts, jsize count) {
@@ -411,4 +495,52 @@ JNIEXPORT jstring JNICALL Java_com_novage_p2pml_engine_NativeEngine_evaluateScri
   }
   p2pml_eval_result_free(&result);
   return value;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_wsOpen(
+    JNIEnv *env, jclass type, jlong handle, jint id, jstring protocol, jstring extensions) {
+  (void)type;
+  // HTTP tokens: ASCII.
+  const char *protocol_chars = (*env)->GetStringUTFChars(env, protocol, NULL);
+  const char *extensions_chars =
+      protocol_chars != NULL ? (*env)->GetStringUTFChars(env, extensions, NULL) : NULL;
+  bool posted = extensions_chars != NULL &&
+                p2pml_ws_open(engine_of(handle), id, protocol_chars, extensions_chars);
+  if (extensions_chars != NULL) {
+    (*env)->ReleaseStringUTFChars(env, extensions, extensions_chars);
+  }
+  if (protocol_chars != NULL) {
+    (*env)->ReleaseStringUTFChars(env, protocol, protocol_chars);
+  }
+  return posted;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_wsMessage(
+    JNIEnv *env, jclass type, jlong handle, jint id, jboolean binary, jbyteArray bytes) {
+  (void)type;
+  jsize length = (*env)->GetArrayLength(env, bytes);
+  // As httpData: the engine copies once.
+  jbyte *elements = (*env)->GetPrimitiveArrayCritical(env, bytes, NULL);
+  if (elements == NULL) {
+    return false;
+  }
+  bool posted =
+      p2pml_ws_message(engine_of(handle), id, binary, (const uint8_t *)elements, (size_t)length);
+  (*env)->ReleasePrimitiveArrayCritical(env, bytes, elements, JNI_ABORT);
+  return posted;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_wsClose(
+    JNIEnv *env, jclass type, jlong handle, jint id, jint code, jbyteArray reason,
+    jboolean was_clean, jboolean failed) {
+  (void)type;
+  jsize length = (*env)->GetArrayLength(env, reason);
+  jbyte *elements = (*env)->GetPrimitiveArrayCritical(env, reason, NULL);
+  if (elements == NULL) {
+    return false;
+  }
+  bool posted = p2pml_ws_close(engine_of(handle), id, code, (const uint8_t *)elements,
+                               (size_t)length, was_clean, failed);
+  (*env)->ReleasePrimitiveArrayCritical(env, reason, elements, JNI_ABORT);
+  return posted;
 }

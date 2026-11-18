@@ -130,8 +130,7 @@
       // WebIDL gets and converts each member of a dictionary in turn, in the
       // order of their names.
       const options = natives.dictionary(init);
-      // An unsigned long: ToNumber, then modulo 2^32 (NaN and Infinity are 0).
-      const unsignedLong = (value) => (value === undefined ? 0 : +value >>> 0);
+      const { unsignedLong } = natives;
       this.#colno = unsignedLong(options.colno);
       this.#error = options.error;
       const { filename } = options;

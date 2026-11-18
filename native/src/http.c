@@ -1,7 +1,6 @@
 #include "http.h"
 
 #include <stdlib.h>
-#include <string.h>
 
 // The JS functions below follow QuickJS's convention: the arguments stay
 // QuickJS's, and the returned value is new, for the caller to free.
@@ -64,42 +63,24 @@ static JSValue http_start(JSContext *context, JSValueConst this_value, int argc,
   (void)this_value;
   (void)argc;
   p2pml_http *http = http_of(context);
-  JSValue count_value = JS_GetPropertyStr(context, argv[2], "length");
   uint32_t count = 0;
-  int converted = JS_ToUint32(context, &count, count_value);
-  JS_FreeValue(context, count_value);
-  if (converted < 0) {
+  const char **texts = p2pml_strings_new(context, argv[2], &count);
+  if (texts == NULL) {
     return JS_EXCEPTION;
   }
-  size_t pairs = count / 2;
-  const char **texts = (const char **)calloc((size_t)count + 1, sizeof *texts);
-  if (texts == NULL) {
-    return JS_ThrowOutOfMemory(context);
-  }
-  bool ok = true;
-  for (uint32_t i = 0; ok && i < 2 * pairs; i++) {
-    JSValue text = JS_GetPropertyUint32(context, argv[2], i);
-    texts[i] = JS_ToCString(context, text);
-    JS_FreeValue(context, text);
-    ok = texts[i] != NULL;
-  }
-  const char *method = ok ? JS_ToCString(context, argv[0]) : NULL;
+  const char *method = JS_ToCString(context, argv[0]);
   const char *url = method != NULL ? JS_ToCString(context, argv[1]) : NULL;
   JSValue id = JS_EXCEPTION;
   int32_t started = url != NULL ? p2pml_channel_add(http->channel) : 0;
   if (started != 0) {
-    http->client.start(http->client.data, started, method, url, pairs, texts);
+    http->client.start(http->client.data, started, method, url, count / 2, texts);
     id = JS_NewInt32(context, started);
   } else if (url != NULL) {
     JS_ThrowOutOfMemory(context);
   }
   JS_FreeCString(context, url);
   JS_FreeCString(context, method);
-  // JS_FreeCString does nothing for NULL: the texts after a failure.
-  for (size_t i = 0; i < 2 * pairs; i++) {
-    JS_FreeCString(context, texts[i]);
-  }
-  free((void *)texts);
+  p2pml_strings_free(context, texts, count);
   return id;
 }
 
@@ -139,16 +120,12 @@ bool p2pml_http_add(JSContext *context, JSValueConst natives) {
                                     (int)(sizeof http_functions / sizeof http_functions[0])) == 0;
 }
 
-static p2pml_arg text_arg(const char *text) {
-  return (p2pml_arg){.type = P2PML_ARG_STRING, .pointer = text, .length = strlen(text)};
-}
-
 bool p2pml_http_response(p2pml_engine *engine, int32_t id, int status, const char *status_text,
                          const char *url, size_t header_count, const char *const *headers) {
   p2pml_arg args[] = {
       {.type = P2PML_ARG_INT, .number = status},
-      text_arg(status_text),
-      text_arg(url),
+      p2pml_text_arg(status_text),
+      p2pml_text_arg(url),
       {.type = P2PML_ARG_STRINGS, .pointer = (const void *)headers, .length = 2 * header_count},
   };
   return p2pml_channel_post(engine, P2PML_CHANNEL_HTTP, id, "response",
@@ -165,6 +142,6 @@ bool p2pml_http_end(p2pml_engine *engine, int32_t id) {
 }
 
 bool p2pml_http_fail(p2pml_engine *engine, int32_t id, const char *message) {
-  p2pml_arg arg = text_arg(message);
+  p2pml_arg arg = p2pml_text_arg(message);
   return p2pml_channel_post(engine, P2PML_CHANNEL_HTTP, id, "fail", 1, &arg);
 }

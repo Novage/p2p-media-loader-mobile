@@ -5,6 +5,7 @@
 #include "modules.h"
 #include "polyfills.h"
 #include "url.h"
+#include "websocket.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -71,7 +72,9 @@ struct p2pml_engine {
   rejection *rejections;
   // The requests of fetch: engine thread only, while the runtime exists.
   p2pml_http *http;
-  // The channels of `http` and others, borrowed: as `http`.
+  // The sockets of WebSocket: as `http`.
+  p2pml_ws *ws;
+  // The channels of `http` and `ws`, borrowed: as they are.
   p2pml_channel *channels[P2PML_CHANNEL_COUNT];
   // navigator.userAgent, UTF-8.
   char user_agent[];
@@ -537,7 +540,7 @@ static bool add_polyfills(p2pml_engine *engine) {
                JS_SetPropertyFunctionList(context, natives, native_functions,
                                           COUNT(native_functions)) == 0 &&
                p2pml_add_encoding(context, natives) && p2pml_add_url(context, natives) &&
-               p2pml_http_add(context, natives);
+               p2pml_http_add(context, natives) && p2pml_ws_add(context, natives);
   for (int i = 0; added && i < p2pml_polyfills_count; i++) {
     const p2pml_script *script = &p2pml_polyfills[i];
     const char *source = (const char *)script->source;
@@ -601,16 +604,19 @@ static int interrupt_if_closed(JSRuntime *runtime, void *opaque) {
 }
 
 bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data,
-                      const p2pml_http_client *http) {
+                      const p2pml_http_client *http, const p2pml_ws_client *ws) {
   engine->log = log;
   engine->log_data = log_data;
   engine->started = now();
   engine->http = p2pml_http_new(http);
-  if (engine->http != NULL) {
+  engine->ws = p2pml_ws_new(ws);
+  bool clients = engine->http != NULL && engine->ws != NULL;
+  if (clients) {
     engine->channels[P2PML_CHANNEL_HTTP] = p2pml_http_channel(engine->http);
+    engine->channels[P2PML_CHANNEL_WS] = p2pml_ws_channel(engine->ws);
   }
   // Created on this thread, which QuickJS takes as the top of its stack.
-  engine->runtime = engine->http != NULL ? JS_NewRuntime() : NULL;
+  engine->runtime = clients ? JS_NewRuntime() : NULL;
   if (engine->runtime != NULL) {
     JS_SetInterruptHandler(engine->runtime, interrupt_if_closed, engine);
     JS_SetHostPromiseRejectionTracker(engine->runtime, track_rejection, engine);
@@ -643,10 +649,13 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
     engine->timers = pending->next;
     free_timer(engine->context, pending);
   }
-  // Cancels the requests that are still open.
+  // Cancels the requests and stops the sockets that are still open.
   p2pml_http_free(engine->http, engine->context);
   engine->http = NULL;
+  p2pml_ws_free(engine->ws, engine->context);
+  engine->ws = NULL;
   engine->channels[P2PML_CHANNEL_HTTP] = NULL;
+  engine->channels[P2PML_CHANNEL_WS] = NULL;
   if (engine->context != NULL) {
     JS_FreeContext(engine->context);
     engine->context = NULL;
@@ -699,6 +708,8 @@ void p2pml_engine_free(p2pml_engine *engine) {
 JSContext *p2pml_engine_context(p2pml_engine *engine) { return engine->context; }
 
 p2pml_http *p2pml_engine_http(p2pml_engine *engine) { return engine->http; }
+
+p2pml_ws *p2pml_engine_ws(p2pml_engine *engine) { return engine->ws; }
 
 p2pml_channel *p2pml_engine_channel(p2pml_engine *engine, p2pml_channel_id which) {
   return engine->channels[which];

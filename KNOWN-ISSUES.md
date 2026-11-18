@@ -42,9 +42,9 @@ that describes the behaviour, not here.
   `org.gradle.warning.mode=fail` would fail the build, and Gradle prints a
   summary of deprecations instead. Set the mode to `fail` in
   `gradle.properties` once releases of both stop the call.
-- **Ktor can change a request's URL.** `fetch` gives Ktor the URL as the
-  WHATWG parser writes it, and Ktor parses it again before OkHttp sends it: a
-  repeated query name is regrouped (`?a=1&b=2&a=3` goes out as
+- **Ktor can change a request's URL.** `fetch` and `WebSocket` give Ktor the
+  URL as the WHATWG parser writes it, and Ktor parses it again before OkHttp
+  sends it: a repeated query name is regrouped (`?a=1&b=2&a=3` goes out as
   `?a=1&a=3&b=2`), an empty pair is dropped (`?x=1&&y=2`, `?=x&k`), and OkHttp
   encodes `|` and `^` in a path. A URL that a CDN signed over its exact text,
   or a cache key that uses it, can then fail where a browser succeeds. A fix

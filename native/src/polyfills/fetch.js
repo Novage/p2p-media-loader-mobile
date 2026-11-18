@@ -3,14 +3,18 @@
 // the network work (natives.httpStart, native/src/http.c); this file gives
 // the WebIDL surface and the streamed body.
 (natives) => {
-  const { usvString: usv, requireArguments, isObject, dictionary } = natives;
+  const {
+    usvString: usv,
+    requireArguments,
+    isObject,
+    dictionary,
+    isHttpToken,
+  } = natives;
   // Kept now, so that a script that replaces these globals changes nothing
   // here.
   const { URL, TextDecoder, AbortController, AbortSignal } = globalThis;
   const { userAgent } = navigator;
 
-  // An HTTP token (RFC 9110): a header name or a method.
-  const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
   // Leading and trailing HTTP whitespace.
   const HTTP_WHITESPACE = /^[\t\n\r ]+|[\t\n\r ]+$/g;
   // A ByteString with no NUL, CR or LF.
@@ -18,7 +22,7 @@
 
   const headerName = (name) => {
     const text = `${name}`;
-    if (!TOKEN.test(text)) {
+    if (!isHttpToken(text)) {
       throw new TypeError(`Headers: "${text}" is not a valid header name`);
     }
     return text.toLowerCase();
@@ -147,7 +151,7 @@
 
   const methodOf = (value) => {
     const text = `${value}`;
-    if (!TOKEN.test(text)) {
+    if (!isHttpToken(text)) {
       throw new TypeError(`Request: "${text}" is not a valid method`);
     }
     const upper = text.toUpperCase();

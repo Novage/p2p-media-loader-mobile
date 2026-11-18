@@ -66,7 +66,7 @@ disagree, AGENTS.md is right.
 | WPT URL test data                                     | `native/test/third_party/wpt-url/update.mjs` (`COMMIT`)                            | <https://github.com/web-platform-tests/wpt/tree/master/url>                                                                                                |
 | The web core of the library (`p2p-media-loader-core`) | `native/package.json` (exact version), `native/package-lock.json` (sha512)         | `npm view p2p-media-loader-core versions`; the web repository's tags and CHANGELOG.md                                                                      |
 | Node of CI                                            | `.github/workflows/build.yml` (`node-version`)                                     | the lowest Node that `README.md` names                                                                                                                     |
-| Ktor, kotlinx-coroutines, OkHttp (fetch)              | catalog `ktor`, `kotlinx-coroutines`, `okhttp`                                     | `gh api repos/ktorio/ktor/releases/latest`; Maven Central for kotlinx-coroutines and OkHttp                                                                |
+| Ktor, kotlinx-coroutines, OkHttp (fetch, WebSocket)   | catalog `ktor`, `kotlinx-coroutines`, `okhttp`                                     | `gh api repos/ktorio/ktor/releases/latest`; Maven Central for kotlinx-coroutines and OkHttp                                                                |
 | node-peer packages, Prettier                          | `tools/node-peer/package.json`, `package-lock.json`                                | `npm view <package> version`                                                                                                                               |
 | The web core of node-peer (`p2p-media-loader-core`)   | `tools/node-peer/package.json`; the local `.core/SOURCE` names the packed checkout | the web repository; see `tools/node-peer/README.md`, "pack-core"                                                                                           |
 
@@ -118,12 +118,14 @@ Then:
 
 ## Ktor, kotlinx-coroutines and OkHttp
 
-`fetch` runs over Ktor in common code, with Ktor's OkHttp engine on Android
+`fetch` and `WebSocket` run over Ktor in common code, with Ktor's OkHttp engine on Android
 (specs/engine.md, "The platform's network clients"). Update them as one group.
 
 1. Ktor: read the release notes of each version skipped, for the client API
    that `HttpBridge.kt` uses (`prepareRequest`, `execute`, `bodyAsChannel`,
-   `readAvailable`), the OkHttp engine's configuration (`SharedHttpClient.kt`),
+   `readAvailable`), the WebSocket API that `WsBridge.kt` uses (`webSocket`,
+   `incoming`, `outgoing`, `closeReason`; Ktor's `OkHttpWebsocketSession`
+   turns the frames into OkHttp's calls), the OkHttp engine's configuration (`SharedHttpClient.kt`),
    and the Kotlin version it needs.
 2. OkHttp: the catalog's `okhttp` is the version that `ktor-client-okhttp`
    depends on, so that `mockwebserver3` tests the same OkHttp. Check it with
@@ -132,8 +134,10 @@ Then:
    API 37): the build stops at `checkAndroidMainAarMetadata`. Raising
    `compileSdk` and `minCompileSdk` changes what apps compile against: ask
    the user.
-4. Run the build (`HttpBridgeTest` and `JsFetchTest` use a real local server)
-   and the device test (`JsFetchDeviceTest` logs the throughput).
+4. Run the build (`HttpBridgeTest`, `WsBridgeTest`, `JsFetchTest` and
+   `JsWebSocketTest` use a real local server) and the device test
+   (`JsFetchDeviceTest` logs the throughput; `JsWebSocketDeviceTest` logs a
+   connect to a public tracker).
 5. Measure the sample app's release APK with R8: enable `isMinifyEnabled` with
    a keep rule for `com.novage.p2pml.**` in a temporary edit of
    `samples/android/build.gradle.kts`, build `:samples:android:assembleRelease`,

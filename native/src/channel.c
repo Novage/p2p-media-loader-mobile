@@ -88,6 +88,38 @@ void p2pml_channel_listen(p2pml_channel *channel, JSContext *context, JSValueCon
   channel->listener = JS_DupValue(context, listener);
 }
 
+const char **p2pml_strings_new(JSContext *context, JSValueConst array, uint32_t *count) {
+  JSValue length = JS_GetPropertyStr(context, array, "length");
+  int converted = JS_ToUint32(context, count, length);
+  JS_FreeValue(context, length);
+  if (converted < 0) {
+    return NULL;
+  }
+  // calloc(0) can give NULL, so never 0.
+  const char **strings = (const char **)calloc((size_t)*count + 1, sizeof *strings);
+  if (strings == NULL) {
+    JS_ThrowOutOfMemory(context);
+    return NULL;
+  }
+  for (uint32_t i = 0; i < *count; i++) {
+    JSValue text = JS_GetPropertyUint32(context, array, i);
+    strings[i] = JS_ToCString(context, text);
+    JS_FreeValue(context, text);
+    if (strings[i] == NULL) {
+      p2pml_strings_free(context, strings, i);
+      return NULL;
+    }
+  }
+  return strings;
+}
+
+void p2pml_strings_free(JSContext *context, const char **strings, uint32_t count) {
+  for (uint32_t i = 0; i < count; i++) {
+    JS_FreeCString(context, strings[i]);
+  }
+  free((void *)strings);
+}
+
 static bool named(const char *const *names, const char *name) {
   for (; *names != NULL; names++) {
     if (strcmp(*names, name) == 0) {
