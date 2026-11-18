@@ -78,11 +78,11 @@ sample app (5.56 MB to 5.98 MB). On the OnePlus 7, a 20 MB body went through
 about 50 times the bitrate of 1080p.
 
 Step 2.3b added `WebSocket`, over Ktor's `WebSockets` plugin on the same
-client, so the network row is complete. The core opens no tracker socket
-while the page has no `RTCPeerConnection` (it turns P2P off), so the core
-connects to its trackers only with WebRTC (step 2.4b); the tests give it a
-stub `RTCPeerConnection` to see its first announce, which needs no peer
-connection.
+client, so the network row is complete. Step 2.4b added `RTCPeerConnection`
+over libdatachannel, called from the engine's C, so the core turns P2P on: two
+peers in one engine move 4 MiB through it. libdatachannel adds 2.15 MB to the
+arm64 `libp2pml.so` (3.75 MB in all) and 5.84 MB to the sample app with R8,
+for its three ABIs.
 
 Not needed: `queueMicrotask`, because the core has its own function of that
 name, and `RTCIceCandidate`, because the core sends the whole SDP through the

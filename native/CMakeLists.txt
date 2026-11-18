@@ -91,7 +91,8 @@ function(embed_js output list)
 endfunction()
 
 # The JS polyfills, in the order the engine evaluates them.
-set(POLYFILLS webidl.js dom_exception.js events.js encoding.js base64.js url.js fetch.js websocket.js)
+set(POLYFILLS webidl.js dom_exception.js events.js encoding.js base64.js url.js fetch.js websocket.js
+  webrtc.js)
 list(TRANSFORM POLYFILLS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/src/polyfills/)
 embed_js(${CMAKE_BINARY_DIR}/polyfills.c p2pml_polyfills ${POLYFILLS})
 
@@ -105,7 +106,7 @@ if(NOT EXISTS ${CORE_BUNDLE})
 endif()
 embed_js(${CMAKE_BINARY_DIR}/core_bundle.c p2pml_core_bundle ${CORE_BUNDLE})
 
-set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c src/channel.c src/http.c src/websocket.c
+set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c src/channel.c src/http.c src/websocket.c src/rtc.c
   ${CMAKE_BINARY_DIR}/polyfills.c ${CMAKE_BINARY_DIR}/core_bundle.c)
 
 # Ada as released: C++20, without exceptions, RTTI and
@@ -180,7 +181,7 @@ target_compile_definitions(ada PRIVATE ADA_DEVELOPMENT_CHECKS=0)
 
 add_library(p2pml SHARED ${ENGINE_SOURCES} src/jni.c)
 target_include_directories(p2pml PRIVATE src)
-target_link_libraries(p2pml PRIVATE quickjs ada)
+target_link_libraries(p2pml PRIVATE quickjs ada datachannel-static)
 if(ANDROID)
   # The static libraries' symbols (libc++, which Ada needs, among them) are
   # not exported: only the JNI functions are.
@@ -222,13 +223,13 @@ if(P2PML_HOST)
   target_include_directories(engine_test PRIVATE src)
   target_compile_options(engine_test PRIVATE ${SANITIZERS})
   target_link_options(engine_test PRIVATE ${SANITIZERS})
-  target_link_libraries(engine_test PRIVATE quickjs_sanitized ada_sanitized)
+  target_link_libraries(engine_test PRIVATE quickjs_sanitized ada_sanitized datachannel-static)
   use_our_checks(engine_test)
 
   enable_testing()
   add_test(NAME engine COMMAND engine_test)
   # A broken loop hangs instead of failing.
-  set_tests_properties(engine PROPERTIES TIMEOUT 60)
+  set_tests_properties(engine PROPERTIES TIMEOUT 120)
 endif()
 
 # The C test of libdatachannel: two peer connections in one process. On the

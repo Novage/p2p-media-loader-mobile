@@ -86,18 +86,13 @@ class JsWebSocketTest {
         assertEquals("test-agent", server.takeRequest().headers["User-Agent"])
     }
 
-    // The core opens its tracker socket at the first segment request and announces the stream.
-    // Without WebRTC it turns P2P off, so the test gives it a stub: its first announce needs no
-    // peer connection.
+    // The core opens its tracker socket at the first segment request and announces the stream:
+    // the engine's RTCPeerConnection turns its P2P on.
     @Test
     fun theCoreAnnouncesToItsTracker() {
         engine.post {
             engine.evaluateScript(
                 """
-                window.RTCPeerConnection = class {
-                  createOffer() { return Promise.resolve({ type: "offer", sdp: "" }); }
-                  close() {}
-                };
                 import("p2p-media-loader-core").then(async (core) => {
                   const c = new core.Core({
                     manifestParsers: [core.hlsManifestParser],

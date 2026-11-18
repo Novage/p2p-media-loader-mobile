@@ -18,6 +18,7 @@
 typedef enum {
   P2PML_CHANNEL_HTTP,
   P2PML_CHANNEL_WS,
+  P2PML_CHANNEL_RTC,
   P2PML_CHANNEL_COUNT,
 } p2pml_channel_id;
 

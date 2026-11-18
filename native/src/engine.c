@@ -4,6 +4,7 @@
 #include "http.h"
 #include "modules.h"
 #include "polyfills.h"
+#include "rtc.h"
 #include "url.h"
 #include "websocket.h"
 
@@ -74,7 +75,9 @@ struct p2pml_engine {
   p2pml_http *http;
   // The sockets of WebSocket: as `http`.
   p2pml_ws *ws;
-  // The channels of `http` and `ws`, borrowed: as they are.
+  // The peer connections of RTCPeerConnection: as `http`.
+  p2pml_rtc *rtc;
+  // The channels of `http`, `ws` and `rtc`, borrowed: as they are.
   p2pml_channel *channels[P2PML_CHANNEL_COUNT];
   // navigator.userAgent, UTF-8.
   char user_agent[];
@@ -540,7 +543,8 @@ static bool add_polyfills(p2pml_engine *engine) {
                JS_SetPropertyFunctionList(context, natives, native_functions,
                                           COUNT(native_functions)) == 0 &&
                p2pml_add_encoding(context, natives) && p2pml_add_url(context, natives) &&
-               p2pml_http_add(context, natives) && p2pml_ws_add(context, natives);
+               p2pml_http_add(context, natives) && p2pml_ws_add(context, natives) &&
+               p2pml_rtc_add(context, natives);
   for (int i = 0; added && i < p2pml_polyfills_count; i++) {
     const p2pml_script *script = &p2pml_polyfills[i];
     const char *source = (const char *)script->source;
@@ -610,10 +614,12 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   engine->started = now();
   engine->http = p2pml_http_new(http);
   engine->ws = p2pml_ws_new(ws);
-  bool clients = engine->http != NULL && engine->ws != NULL;
+  engine->rtc = p2pml_rtc_new(engine);
+  bool clients = engine->http != NULL && engine->ws != NULL && engine->rtc != NULL;
   if (clients) {
     engine->channels[P2PML_CHANNEL_HTTP] = p2pml_http_channel(engine->http);
     engine->channels[P2PML_CHANNEL_WS] = p2pml_ws_channel(engine->ws);
+    engine->channels[P2PML_CHANNEL_RTC] = p2pml_rtc_channel(engine->rtc);
   }
   // Created on this thread, which QuickJS takes as the top of its stack.
   engine->runtime = clients ? JS_NewRuntime() : NULL;
@@ -654,8 +660,13 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   engine->http = NULL;
   p2pml_ws_free(engine->ws, engine->context);
   engine->ws = NULL;
+  // Deletes the open peer connections: no callback of libdatachannel posts to
+  // this engine after it, so the engine can be freed.
+  p2pml_rtc_free(engine->rtc, engine->context);
+  engine->rtc = NULL;
   engine->channels[P2PML_CHANNEL_HTTP] = NULL;
   engine->channels[P2PML_CHANNEL_WS] = NULL;
+  engine->channels[P2PML_CHANNEL_RTC] = NULL;
   if (engine->context != NULL) {
     JS_FreeContext(engine->context);
     engine->context = NULL;
@@ -710,6 +721,8 @@ JSContext *p2pml_engine_context(p2pml_engine *engine) { return engine->context; 
 p2pml_http *p2pml_engine_http(p2pml_engine *engine) { return engine->http; }
 
 p2pml_ws *p2pml_engine_ws(p2pml_engine *engine) { return engine->ws; }
+
+p2pml_rtc *p2pml_engine_rtc(p2pml_engine *engine) { return engine->rtc; }
 
 p2pml_channel *p2pml_engine_channel(p2pml_engine *engine, p2pml_channel_id which) {
   return engine->channels[which];

@@ -68,3 +68,20 @@ that describes the behaviour, not here.
   a network error, where a browser sends the Latin-1 value and drops or keeps
   the header. The core sends only `Range`; only an app's `httpRequestSetup`
   can add such a header.
+- **A data channel's `bufferedAmount` counts less than a browser's.**
+  libdatachannel counts only its own queue, not the bytes that usrsctp took
+  into its send buffer (1 MiB, usrsctp's default, which `rtcSetSctpSettings`
+  can change for the whole process before the first peer connection). So
+  the core's pacing of uploads (`bufferedamountlow` at 64 KiB) starts later
+  than in a browser, and more data waits in the buffer.
+- **A peer connection that is "disconnected" does not recover.**
+  libdatachannel closes it after a disconnection, where a browser can go back
+  to "connected"; there is no ICE restart. The core then connects again
+  through its tracker.
+- **libjuice uses one STUN server.** Of the configuration's STUN servers,
+  libdatachannel's ICE (libjuice) takes one, at random, and it has no STUN
+  or TURN over TCP or TLS: the polyfill skips `stuns:`, `turns:` and a TCP
+  or TLS transport, and uses the other servers of the list. A browser tries
+  every server.
+- **A data channel never fires `error`.** libdatachannel has no error for a
+  data channel; a channel that fails closes (`closing`, then `close`).

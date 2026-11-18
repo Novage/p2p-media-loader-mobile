@@ -86,15 +86,11 @@ class JsWebSocketDeviceTest {
         assertEquals("close 4000 bye true", next())
     }
 
-    // As JsWebSocketTest: a stub RTCPeerConnection, so that the core turns P2P on.
+    // As JsWebSocketTest: the engine's RTCPeerConnection turns the core's P2P on.
     @Test
     fun theCoreAnnouncesToItsTracker() {
         evaluate(
             """
-            window.RTCPeerConnection = class {
-              createOffer() { return Promise.resolve({ type: "offer", sdp: "" }); }
-              close() {}
-            };
             import("p2p-media-loader-core").then(async (core) => {
               const c = new core.Core({
                 manifestParsers: [core.hlsManifestParser],

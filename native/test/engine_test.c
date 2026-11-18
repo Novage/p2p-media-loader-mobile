@@ -1080,6 +1080,74 @@ static void test_a_message_that_js_cannot_take_fails_the_socket(void) {
   free_log(&log);
 }
 
+// Two peer connections of libdatachannel in the engine, connected over the
+// loopback, as webrtc_test.js connects them: connect() resolves with
+// { offerer, answerer, local, remote }.
+#define CONNECT_JS                                                                                 \
+  "const nextEvent = (target, type) => new Promise((resolve) =>"                                   \
+  "  target.addEventListener(type, resolve, { once: true }));"                                     \
+  "const gathered = async (peer) => {"                                                             \
+  "  while (peer.iceGatheringState !== 'complete')"                                                \
+  "    await nextEvent(peer, 'icegatheringstatechange');"                                          \
+  "  const { type, sdp } = peer.localDescription;"                                                 \
+  "  return { type, sdp };"                                                                        \
+  "};"                                                                                             \
+  "const connect = async () => {"                                                                  \
+  "  const offerer = new RTCPeerConnection();"                                                     \
+  "  const answerer = new RTCPeerConnection();"                                                    \
+  "  const local = offerer.createDataChannel('webtorrent');"                                       \
+  "  const incoming = nextEvent(answerer, 'datachannel');"                                         \
+  "  await offerer.setLocalDescription(await offerer.createOffer());"                              \
+  "  await answerer.setRemoteDescription(await gathered(offerer));"                                \
+  "  await answerer.setLocalDescription(await answerer.createAnswer());"                           \
+  "  await offerer.setRemoteDescription(await gathered(answerer));"                                \
+  "  const remote = (await incoming).channel;"                                                     \
+  "  if (local.readyState !== 'open') await nextEvent(local, 'open');"                             \
+  "  if (remote.readyState !== 'open') await nextEvent(remote, 'open');"                           \
+  "  return { offerer, answerer, local, remote };"                                                 \
+  "};"
+
+// The close deletes the peer connections that are open, also with data on
+// its way: no callback of libdatachannel reaches the engine after its free
+// (ASan, while the library's threads go on for a while).
+static void test_the_close_deletes_open_peer_connections(void) {
+  run_script(CONNECT_JS "connect().then(({ local }) => {"
+                        "  const chunk = new Uint8Array(65535);"
+                        "  for (let i = 0; i < 64; i++) local.send(chunk);"
+                        "  closeEngine();"
+                        "}).catch((error) => { console.error(String(error)); closeEngine(); });",
+             NULL);
+  nanosleep(&(struct timespec){.tv_nsec = 200L * 1000 * 1000}, NULL);
+}
+
+// A message that JS cannot take fails its peer connection, which
+// libdatachannel deletes: JS gets a failed ICE connection, and its channels
+// close.
+static void test_a_message_that_js_cannot_take_fails_the_peer(void) {
+  captured_log log = {0};
+  run_script(CONNECT_JS "const typedArray = Object.getPrototypeOf(Uint8Array.prototype);"
+                        "const buffer = Object.getOwnPropertyDescriptor(typedArray, 'buffer');"
+                        "connect().then(({ answerer, local, remote }) => {"
+                        "  local.send(new Uint8Array([1]));"
+                        // webrtc.js's listener reads it for each binary
+                        // message, which comes in a later task; its send
+                        // too, so after the send.
+                        "  Object.defineProperty(typedArray, 'buffer', {"
+                        "    get() { throw new Error('no buffer'); }, configurable: true });"
+                        "  remote.onmessage = () => console.log('message');"
+                        "  remote.onclose = () => {"
+                        "    Object.defineProperty(typedArray, 'buffer', buffer);"
+                        "    console.log('close ' + answerer.iceConnectionState);"
+                        "    closeEngine();"
+                        "  };"
+                        "}).catch((error) => { console.error(String(error)); closeEngine(); });",
+             &log);
+  CHECK(log.count == 2);
+  check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught Error: no buffer", false);
+  check_line(&log, 1, P2PML_LOG_INFO, "close failed", true);
+  free_log(&log);
+}
+
 // An event after the close is not taken, and its copy is freed (ASan).
 static void test_an_event_after_the_close_is_freed(void) {
   p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
@@ -1173,6 +1241,8 @@ int main(void) {
   test_an_event_after_the_close_is_freed();
   test_the_close_stops_open_sockets();
   test_a_message_that_js_cannot_take_fails_the_socket();
+  test_the_close_deletes_open_peer_connections();
+  test_a_message_that_js_cannot_take_fails_the_peer();
   test_an_event_that_js_cannot_take_fails_the_request();
   test_js_files();
   puts("engine tests passed");

@@ -7,11 +7,6 @@ const WS_URL = "wss://example.com/tracker";
 
 const lastOpened = () => fakeWs.opened[fakeWs.opened.length - 1];
 
-const nextEvent = (target, type) =>
-  new Promise((resolve) =>
-    target.addEventListener(type, resolve, { once: true }),
-  );
-
 // A socket that the fake opened, with its id.
 const openSocket = async (protocol = "") => {
   const socket = new WebSocket(WS_URL);
@@ -20,11 +15,6 @@ const openSocket = async (protocol = "") => {
   fakeWs.open(id, protocol, "");
   await opened;
   return { socket, id };
-};
-
-const assertDomException = (body, name, what) => {
-  const error = assertThrows(DOMException, body, what);
-  assertEquals(error.name, name, `${what}: name`);
 };
 
 test("the constructor checks the URL and the subprotocols", () => {

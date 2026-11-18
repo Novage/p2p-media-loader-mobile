@@ -6,8 +6,8 @@
 let testsRun = 0;
 let testsPending = 0;
 let fileRan = false;
-// How long the async tests of a file may take.
-const ASYNC_LIMIT_MS = 5000;
+// How long the async tests of a file may take: setAsyncLimit changes it.
+let asyncLimitMs = 5000;
 
 const closeWhenDone = () => {
   if (fileRan && testsPending === 0) closeEngine();
@@ -33,6 +33,12 @@ globalThis.test = (name, body) => {
   }
 };
 
+// Sets how long the async tests of the file may take, for a file whose tests
+// need more time than the others.
+globalThis.setAsyncLimit = (ms) => {
+  asyncLimitMs = ms;
+};
+
 // The count of tests, in the task after the file's. The engine closes after
 // this task (not in it, which would lose the count), or when the last async
 // test finishes. One that has not finished within the limit fails.
@@ -40,7 +46,7 @@ globalThis.testsFinished = () => {
   fileRan = true;
   setTimeout(() => {
     console.error(`${testsPending} async test(s) did not finish`);
-  }, ASYNC_LIMIT_MS);
+  }, asyncLimitMs);
   Promise.resolve().then(closeWhenDone);
   return testsRun;
 };
@@ -70,6 +76,28 @@ globalThis.assertThrows = (type, body, what = "call") => {
   }
   throw new Error(`${what}: expected a ${type.name}, nothing thrown`);
 };
+
+// Checks that `body` throws a DOMException with name `name`.
+globalThis.assertDomException = (body, name, what) => {
+  const error = assertThrows(DOMException, body, what);
+  assertEquals(error.name, name, `${what}: name`);
+};
+
+// The error that `promise` rejects with; fails if it resolves.
+globalThis.rejection = async (promise) => {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected a rejection");
+};
+
+// The next event `type` of `target`.
+globalThis.nextEvent = (target, type) =>
+  new Promise((resolve) =>
+    target.addEventListener(type, resolve, { once: true }),
+  );
 
 // Waits until the tasks posted before it have run, such as the events of a
 // fake client.

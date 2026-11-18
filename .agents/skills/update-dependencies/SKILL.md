@@ -272,15 +272,16 @@ Update them as one group:
    only option beyond its defaults that libdatachannel needs.
 4. Each archive as "Downloaded native sources" says; for Mbed TLS, the
    second source is the `digest` that GitHub gives the asset.
-5. Run the build: the fetch and the `rtc` C test on the host. The Android
-   build only configures the libraries while `libp2pml.so` does not link
-   them, so build `rtc_test` with `-DP2PML_RTC_TEST=ON` and the NDK's
-   toolchain file for each of the three ABIs: that is the Android compile
-   check. Then the phone: push the arm64 `rtc_test` with
-   `adb push … /data/local/tmp/`, run it, and remove it. Check its LOAD
-   segments (`llvm-readelf -lW`: aligned `0x4000`), its NEEDED libraries
-   (`liblog`, `libm`, `libdl`, `libc` only) and its stripped size against
-   the one before (2.24 MB with libdatachannel 0.24.6 and Mbed TLS 3.6.8).
+5. Run the build: the fetch, the three Android ABIs (`libp2pml.so` links
+   the library), the `rtc` C test and `webrtc_test.js` on the host, and
+   `JsWebRtcTest`. Read the release notes for changes to the callbacks'
+   threads and to deletion (specs/engine.md, "The WebRTC library": a
+   callback after a delete must still find no engine). Check the release
+   `libp2pml.so` of each ABI as the NDK section says, and compare the arm64
+   size with the one before (3.75 MB with libdatachannel 0.24.6 and Mbed TLS
+   3.6.8). Then the device test (`JsWebRtcDeviceTest` logs the throughput).
+   `rtc_test` with `-DP2PML_RTC_TEST=ON` can still run alone on a device
+   with `adb`, to tell a defect of the library from one of the binding.
 
 ## WPT URL test data
 

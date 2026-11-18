@@ -18,15 +18,6 @@ const readAll = async (body) => {
   }
 };
 
-const rejection = async (promise) => {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error("expected a rejection");
-};
-
 test("Headers: names are case-insensitive, values are joined", () => {
   const headers = new Headers({ "Content-Type": "text/plain" });
   headers.append("X-A", " one ");

@@ -19,14 +19,15 @@ the rules for the code that calls it.
 | WebSocket: the sockets, and their events | `native/src/websocket.h`, `native/src/websocket.c`, `native/src/polyfills/websocket.js` |
 | The network clients, over Ktor           | `library/src/commonMain/…/http/HttpBridge.kt`, `WsBridge.kt`                            |
 | WebRTC's library, libdatachannel         | `native/cmake/deps.cmake` (the downloaded sources), `native/test/rtc_test.c`            |
+| WebRTC: the peers, over libdatachannel   | `native/src/rtc.h`, `native/src/rtc.c`, `native/src/polyfills/webrtc.js`                |
 | The JNI glue, nothing else               | `native/src/jni.c`                                                                      |
 | The engine for Kotlin                    | `library/src/androidMain/…/engine/JsEngine.kt`                                          |
 
 The engine is plain C, so that iOS calls the same code through cinterop, and
 native libraries such as libdatachannel call it with no JNI. The C code,
-QuickJS and Ada make one shared library, `libp2pml.so`. Ada is C++: the
-library links libc++ statically on Android, and exports only the JNI
-functions.
+QuickJS, Ada and libdatachannel make one shared library, `libp2pml.so`. Ada
+and libdatachannel are C++: the library links libc++ statically on Android,
+and exports only the JNI functions.
 
 The external sources are downloaded at build time, not kept in the
 repository: QuickJS, Ada, and the WebRTC library (see "The WebRTC
@@ -194,6 +195,45 @@ does not have. They are in C or in the built-in JS polyfills (see
     `Origin`: there is no page. There are no pings, as in a browser.
   - Not checked, as the core asks for no subprotocol: that the server's
     subprotocol is one that the socket asked for.
+- **`RTCPeerConnection`**, **`RTCDataChannel`** and
+  **`RTCSessionDescription`** of WebRTC, with **`RTCPeerConnectionIceEvent`**
+  and **`RTCDataChannelEvent`**, for the core's peers: data channels only.
+  libdatachannel does the network work (see "The WebRTC library").
+  - `new RTCPeerConnection(configuration)`: `iceServers` (`urls`, a string or
+    a list; `username` and `credential` for TURN) and `iceTransportPolicy`.
+    A URL that is not STUN or TURN, one that libdatachannel cannot parse, or
+    an empty `urls` list throws a `SyntaxError`; TURN with no credential an
+    `InvalidAccessError`. STUN or TURN over TLS or TCP is skipped, as
+    libjuice skips it (KNOWN-ISSUES.md).
+  - The steps of the spec: `createOffer()` and `createAnswer()` resolve with
+    a description that is not set; `setLocalDescription(description)` sets a
+    new one of its type, equal to it (libdatachannel's ICE credentials and
+    fingerprint belong to the transport; the given SDP is not read);
+    `setRemoteDescription(description)`. Each sets `signalingState` and fires
+    `signalingstatechange` before its promise resolves. There is no trickle
+    ICE: `localDescription`, read when gathering is complete, has every
+    candidate, as the core sends it; the one `icecandidate` event has a null
+    candidate, after `icegatheringstatechange` to `"complete"`.
+  - `iceGatheringState`, `iceConnectionState` and their events;
+    `datachannel`, whose channel then fires `open`.
+  - `createDataChannel(label)`: ordered and reliable; another option throws a
+    `NotSupportedError`.
+  - `RTCDataChannel`: `label`, `ordered`, `readyState`, `bufferedAmount`
+    (libdatachannel's queue, read when asked), `bufferedAmountLowThreshold`,
+    `binaryType`, `send`, `close`, and the `onopen`, `onmessage`,
+    `onbufferedamountlow`, `onerror`, `onclosing` and `onclose` handlers. A
+    binary message is always an `ArrayBuffer` (there is no `Blob`), as the
+    core asks.
+  - `send(data)`: a string as text, an `ArrayBuffer` or a view (only its
+    bytes) as binary. Not open: an `InvalidStateError`; above the maximum
+    message size: a `TypeError`.
+  - `close()` of a channel: `"closing"`, then `close`; a channel that the
+    other side closes fires `closing`, then `close`. `close()` of the peer
+    connection: every state `"closed"`, its channels closed with no event, as
+    the spec; again does nothing.
+  - Not there, as the core does not use them: `RTCIceCandidate`,
+    `addIceCandidate`, `getStats`, `connectionState`, `negotiationneeded`,
+    renegotiation and ICE restart.
 
 ## Polyfills
 
@@ -298,10 +338,9 @@ the library compile against Android API 37 or later (`minCompileSdk`).
 ## The WebRTC library
 
 WebRTC's data channels come from libdatachannel (C++, with a C API,
-`rtc.h`), built from source with the rest of the native code. The host
-build links it into the C test; no engine code uses it, so `libp2pml.so` does
-not link it, and the Android build only configures it. It needs libjuice
-(ICE), usrsctp (SCTP), plog (its log) and Mbed TLS (DTLS).
+`rtc.h`), built from source with the rest of the native code and linked into
+`libp2pml.so`. It needs libjuice (ICE), usrsctp (SCTP), plog (its log) and
+Mbed TLS (DTLS). Its own log is off.
 
 - **The sources** are downloaded as the other external sources (see "Where
   the code is"): libdatachannel at a release tag, its dependencies at the
@@ -320,6 +359,25 @@ not link it, and the Android build only configures it. It needs libjuice
   messages both ways. With `-DP2PML_RTC_TEST=ON`, the Android build makes
   the same test, to run on a device with `adb`: for each ABI, it is also the
   check that the libraries compile for Android.
+- **The binding** (`native/src/rtc.c`) calls `rtc.h` from the engine's C,
+  with libdatachannel's own negotiation off (the polyfill takes the steps).
+  A peer connection is an item of the engine's channel, as a socket of
+  WebSocket; its data channels are libdatachannel's numbers. An open data
+  channel, its open or a message that JS cannot take fails the peer
+  connection: libdatachannel deletes it, and JS gets a `"failed"` ICE
+  connection and the channels' `close`.
+- **Threads:** libdatachannel calls back from its own threads, and a callback
+  can still run while or just after its peer connection is deleted. Each
+  peer connection's user pointer is its own id, not memory; one table for the
+  process maps that id to its engine. A callback posts only while it holds
+  the table's lock and finds its id there, and the stop of a peer connection
+  (its close, a failure, or the engine's close) takes it out of the table
+  before it deletes the data channels and the peer connection. So no
+  callback reaches an engine after the close. `rtcCleanup` is never called:
+  it would delete the objects of every engine; libdatachannel's threads stay
+  for the life of the process.
+- **The cost:** libdatachannel adds 2.15 MB to the arm64 `libp2pml.so`
+  (3.75 MB in all, stripped).
 
 ## Modules
 
@@ -364,7 +422,9 @@ wait, so the app's main thread never waits for JS:
    after `close` returns. So a function that the engine gives to JS checks
    the close itself before it uses a resource that the close releases.
 
-3. The runtime is freed, with the timers that did not run.
+3. The open requests, sockets and peer connections are stopped (no event of
+   them reaches the engine after this), and the runtime is freed, with the
+   timers that did not run.
 4. The tasks still queued are dropped; each frees what it holds, which is
    never a JS value. Then the thread ends.
 
