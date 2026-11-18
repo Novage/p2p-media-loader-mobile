@@ -80,9 +80,10 @@ about 50 times the bitrate of 1080p.
 Step 2.3b added `WebSocket`, over Ktor's `WebSockets` plugin on the same
 client, so the network row is complete. Step 2.4b added `RTCPeerConnection`
 over libdatachannel, called from the engine's C, so the core turns P2P on: two
-peers in one engine move 4 MiB through it. libdatachannel adds 2.15 MB to the
-arm64 `libp2pml.so` (3.75 MB in all) and 5.84 MB to the sample app with R8,
-for its three ABIs.
+peers in one engine move 4 MiB through it. libdatachannel adds 2.03 MB to the
+arm64 `libp2pml.so` (3.63 MB in all, without Mbed TLS's debug log). In step
+2.4b, with that log, it added 5.84 MB to the sample app with R8, for its three
+ABIs.
 
 Not needed: `queueMicrotask`, because the core has its own function of that
 name, and `RTCIceCandidate`, because the core sends the whole SDP through the
@@ -324,3 +325,46 @@ stall.
 What this does not show yet: the real player (step 2.5), peers behind NATs,
 more than two peers, browser peers (step 2.7), and the phone's CPU, memory
 and temperature (step 2.8).
+
+**CPU and memory, an early measurement (after step 2.4c).** The same phone
+and test, at 1080p, with no player, in runs of 5 to 10 minutes. The CPU is
+the time of all the process's threads, read from `/proc`, in percent of one
+core, from the start position to the summary. simpleperf profiled 60 s of
+two runs.
+
+| Run (5 minutes)                                      | Traffic                                 | CPU    |
+| ---------------------------------------------------- | --------------------------------------- | ------ |
+| Plain OkHttp loads the same segments, with no engine | HTTP 134 MB                             | 7.6 %  |
+| The library, no peer                                 | HTTP 138 MB                             | 11.6 % |
+| The library, with the Node peer                      | HTTP 92 MB, P2P 39 MB down and 64 MB up | 14.3 % |
+| The same, without Mbed TLS's debug log               | HTTP 86 MB, P2P 49 MB down and 58 MB up | 12.1 % |
+
+- With no peer, the library adds about 4% of one core to the same downloads:
+  the engine thread 1.4%, the WebRTC timer 0.5% with no peer connection,
+  and about 2% in the layer of Ktor, coroutines and JNI around OkHttp.
+- The engine thread used 1.4% in every run, 80% of it in QuickJS: the JS
+  work is small.
+- WebRTC used 6% to 7.5% with the peer. Half of libdatachannel's worker
+  time is in system calls: one `sendto` for each UDP packet, and waits
+  between its threads. DTLS uses ChaCha20-Poly1305, which takes about 7% of
+  those threads. Mbed TLS's debug functions took about 1% of them, although
+  no debug callback is set, so the library now builds Mbed TLS without
+  `MBEDTLS_DEBUG_C`. The two runs with the peer differ by more than that
+  change: one run of each is not enough to compare them.
+- The test APK is debuggable, so ART interpreted most of the Kotlin code:
+  in the profile, 61% of the time of the coroutine threads is in ART's
+  interpreter. The Kotlin part, and the OkHttp baseline, are lower in a
+  release app; step 2.8 measures them there.
+- Memory (PSS) peaked near 100 MiB with the library, against 53 MiB for
+  plain OkHttp: mostly the segments the core keeps, in native memory.
+- The phone is a 2019 flagship, not a mid-range phone, and a share of one
+  core does not say which cores ran the threads.
+
+An estimate, not a measurement, for the Kotlin core of "Alternatives", with
+the same libdatachannel and OkHttp: it removes the engine thread's 1.4%,
+and adds the cost of the same core logic in compiled Kotlin, a few tenths of
+a percent. The WebRTC and HTTP costs stay; the layer around OkHttp is a
+choice in both designs. So a Kotlin core would use about 1% of one core less
+on this phone: about 10.5% in place of 11.6% with no peer, and about 13% in
+place of 14.3% with the peer. On a phone 2 to 3 times slower, the difference
+is about 2% to 3.5%. The largest cost is WebRTC's, which both designs share.

@@ -376,8 +376,10 @@ Mbed TLS (DTLS). Its own log is off.
   callback reaches an engine after the close. `rtcCleanup` is never called:
   it would delete the objects of every engine; libdatachannel's threads stay
   for the life of the process.
-- **The cost:** libdatachannel adds 2.15 MB to the arm64 `libp2pml.so`
-  (3.75 MB in all, stripped).
+- **The cost:** libdatachannel adds 2.03 MB to the arm64 `libp2pml.so`
+  (3.63 MB in all, stripped). Mbed TLS is built without its debug log
+  (`MBEDTLS_DEBUG_C`): with it, each DTLS record goes through the debug
+  functions, although libdatachannel sets no debug callback.
 
 ## Modules
 

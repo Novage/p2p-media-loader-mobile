@@ -269,7 +269,9 @@ Update them as one group:
 3. Mbed TLS: the newest release of the 3.6 LTS line, which libdatachannel
    needs (`find_package(MbedTLS 3)`); its release asset, which has the
    generated files. Check again whether `MBEDTLS_SSL_DTLS_SRTP` is still the
-   only option beyond its defaults that libdatachannel needs.
+   only option beyond its defaults that libdatachannel needs, and that
+   libdatachannel still calls no debug function of Mbed TLS:
+   `native/src/mbedtls_user_config.h` turns `MBEDTLS_DEBUG_C` off.
 4. Each archive as "Downloaded native sources" says; for Mbed TLS, the
    second source is the `digest` that GitHub gives the asset.
 5. Run the build: the fetch, the three Android ABIs (`libp2pml.so` links
@@ -278,7 +280,7 @@ Update them as one group:
    threads and to deletion (specs/engine.md, "The WebRTC library": a
    callback after a delete must still find no engine). Check the release
    `libp2pml.so` of each ABI as the NDK section says, and compare the arm64
-   size with the one before (3.75 MB with libdatachannel 0.24.6 and Mbed TLS
+   size with the one before (3.63 MB with libdatachannel 0.24.6 and Mbed TLS
    3.6.8). Then the device test (`JsWebRtcDeviceTest` logs the throughput),
    and the phone with the Node peer in one swarm (`tools/node-peer/README.md`,
    "A phone in the swarm").
