@@ -95,14 +95,13 @@ its own, tested with web peers in the same swarm.
 - Match the surrounding code's style, comment density and naming. Comments
   explain _why_; they do not restate the code.
 - **C in `native/`:** C11 with GNU extensions (gnu11, for POSIX and platform
-  functions). No C++ in our code: Ada (`native/third_party/ada/`) is C++20,
+  functions). No C++ in our code: Ada is C++20,
   compiled as released, and our C calls only its C API. Each function that
   takes or returns a `JSValue` says who frees it; QuickJS's leak check in the
   C tests catches a value not freed. Only the engine thread touches a runtime (see
-  [`specs/engine.md`](specs/engine.md)). `native/third_party/` holds code as
-  released: never edit it, update it as its README says. The sources that the
-  build downloads (`native/cmake/deps.cmake`: libdatachannel and Mbed TLS) are
-  pinned by URL and sha256, and never patched either.
+  [`specs/engine.md`](specs/engine.md)). The repository holds no external code: the
+  build downloads QuickJS, Ada and the WebRTC library, pinned by URL and sha256
+  in `native/cmake/deps.cmake`, and never patches them.
 - **JS in `native/`:** the polyfills (`native/src/polyfills/`) reach C only
   through the natives object they get, and the JS tests are in
   `native/test/js/`, run by the C tests. Prettier formats both.

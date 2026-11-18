@@ -1,6 +1,6 @@
 ---
 name: update-dependencies
-description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog (Ktor, kotlinx-coroutines and OkHttp among them), the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the vendored native code (QuickJS, Ada), the WebRTC library that the build downloads (libdatachannel with libjuice, usrsctp and plog, and Mbed TLS), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
+description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog (Ktor, kotlinx-coroutines and OkHttp among them), the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the native sources that the build downloads (QuickJS, Ada, and the WebRTC library: libdatachannel with libjuice, usrsctp and plog, and Mbed TLS), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
 ---
 
 # Updating dependencies
@@ -41,7 +41,7 @@ disagree, AGENTS.md is right.
   first, then the output of `./gradlew spotlessApply` (or Prettier) with a
   message that says so.
 - **Update the text that names the version:** the comments in
-  `gradle/libs.versions.toml`, the README of a vendored library, the entries
+  `gradle/libs.versions.toml`, the comments of `native/cmake/deps.cmake`, the entries
   of `KNOWN-ISSUES.md` that name a version (remove an entry that the update
   fixes), and `README.md` when a tool that a developer installs changes.
 - **Commit only when the user says so,** as for any change.
@@ -61,8 +61,8 @@ disagree, AGENTS.md is right.
 | NDK, its clang-format, CMake                          | catalog `ndk`, `clang-format`, `cmake`                                             | `https://dl.google.com/android/repository/repository2-3.xml`; the NDK's `source.properties` (`Pkg.ReleaseName`); <https://github.com/android/ndk/releases> |
 | JDK of CI                                             | `.github/workflows/build.yml` (`java-version`)                                     | the lowest JDK that `README.md` names                                                                                                                      |
 | GitHub Actions                                        | `.github/workflows/build.yml` (`uses:`)                                            | `gh api repos/<owner>/<action>/releases/latest`                                                                                                            |
-| QuickJS                                               | `native/third_party/quickjs/` (files, `VERSION`, README's sha256)                  | <https://bellard.org/quickjs/>                                                                                                                             |
-| Ada                                                   | `native/third_party/ada/` (files, README's sha256)                                 | `gh api repos/ada-url/ada/releases/latest` (each asset has a `digest`)                                                                                     |
+| QuickJS                                               | `native/cmake/deps.cmake` (URL and sha256)                                         | <https://bellard.org/quickjs/>                                                                                                                             |
+| Ada                                                   | `native/cmake/deps.cmake` (URL and sha256)                                         | `gh api repos/ada-url/ada/releases/latest` (each asset has a `digest`)                                                                                     |
 | libdatachannel, libjuice, usrsctp, plog, Mbed TLS     | `native/cmake/deps.cmake` (URL and sha256 of each)                                 | `gh api repos/paullouisageneau/libdatachannel/releases`; `gh api repos/Mbed-TLS/mbedtls/releases` (each asset has a `digest`)                              |
 | WPT URL test data                                     | `native/test/third_party/wpt-url/update.mjs` (`COMMIT`)                            | <https://github.com/web-platform-tests/wpt/tree/master/url>                                                                                                |
 | The web core of the library (`p2p-media-loader-core`) | `native/package.json` (exact version), `native/package-lock.json` (sha512)         | `npm view p2p-media-loader-core versions`; the web repository's tags and CHANGELOG.md                                                                      |
@@ -161,7 +161,7 @@ check our C. CI installs the NDK and CMake that the catalog names.
    `minSdk`), changes to the default flags, the libc++ version, and the
    16 KB page size.
 4. Build. Fix each new clang-tidy finding and each new compiler warning in
-   our code; `native/third_party` builds with warnings off.
+   our code; the downloaded sources build with warnings off.
 5. Check the release library of each ABI, in
    `native/build/intermediates/stripped_native_libs/release/.../lib/<abi>/libp2pml.so`:
    - `llvm-readelf -lW`: each `LOAD` segment has alignment `0x4000`;
@@ -186,10 +186,35 @@ still matches.
   version, and read its release notes for changed inputs (such as
   `cache-read-only` of `gradle/actions/setup-gradle`).
 
+## Downloaded native sources
+
+QuickJS, Ada and the WebRTC library are not in the repository: the build
+downloads them (specs/engine.md, "Where the code is"), and
+`native/cmake/deps.cmake` pins each archive by URL and sha256. For each
+update:
+
+1. Download the new archive into an empty folder outside the repository, and
+   run none of its scripts.
+2. Check its sha256 against a second source: a `digest` that GitHub gives a
+   release asset, a second download (bellard.org has no other source), or,
+   for a GitHub archive of a tag or a commit, a `git clone` of that commit
+   compared file by file with the extracted archive
+   (`diff -r --exclude=.git`). GitHub makes the archives of tags and commits
+   on request: if a hash fails with no pin change, compare the archive with a
+   clone in the same way before you change the hash.
+3. Review the change of the code: extract the old and the new archive and
+   read the `diff -r` of the files that the build compiles. The repository
+   shows only the change of the pin.
+4. Change the URL and the sha256 in `native/cmake/deps.cmake`. The build
+   downloads it again (`native/.deps/<name>/.sha256` names the archive that
+   it extracted).
+
 ## QuickJS
 
-Follow `native/third_party/quickjs/README.md`. Then check what the engine
-depends on, because QuickJS has no stable API promise. Each item has tests,
+Its archive is Bellard's release tarball. `add_quickjs` in
+`native/CMakeLists.txt` lists the files it compiles: when the new release
+adds a source file that they need, add it there, with any define of the
+release's Makefile. Then check what the engine depends on, because QuickJS has no stable API promise. Each item has tests,
 and the C test program runs them under AddressSanitizer:
 
 - `JS_SetInterruptHandler` and the uncatchable error of the close
@@ -215,7 +240,9 @@ the NDK.
 
 ## Ada
 
-Follow `native/third_party/ada/README.md`. Then:
+Its archive is `singleheader.zip` of the release (`ada.cpp`, `ada.h`,
+`ada_c.h`); its licence is MIT or Apache-2.0, and the library uses it under
+MIT. Then:
 
 - Read the release notes for changes to `ada_c.h`, which `native/src/url.c`
   calls, and to the defines that `native/CMakeLists.txt` sets
@@ -243,14 +270,8 @@ Update them as one group:
    needs (`find_package(MbedTLS 3)`); its release asset, which has the
    generated files. Check again whether `MBEDTLS_SSL_DTLS_SRTP` is still the
    only option beyond its defaults that libdatachannel needs.
-4. The sha256 of each archive, and a second source for it: for Mbed TLS, the
-   `digest` that GitHub gives the asset; for a GitHub archive of a tag or a
-   commit, a `git clone` of that commit compared file by file with the
-   extracted archive (`diff -r --exclude=.git`). Download into an empty
-   folder outside the repository, and run none of its scripts. GitHub makes
-   the archives of tags and commits on request: if a hash fails with no pin
-   change, compare the archive with a clone in the same way before you
-   change the hash.
+4. Each archive as "Downloaded native sources" says; for Mbed TLS, the
+   second source is the `digest` that GitHub gives the asset.
 5. Run the build: the fetch and the `rtc` C test on the host. The Android
    build only configures the libraries while `libp2pml.so` does not link
    them, so build `rtc_test` with `-DP2PML_RTC_TEST=ON` and the NDK's

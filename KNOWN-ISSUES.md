@@ -20,6 +20,14 @@ that describes the behaviour, not here.
   usrsctp (BSD-3-Clause), plog (MIT) and Mbed TLS (Apache-2.0). Their notices
   must reach the app's users. How the library gives its notices to apps (a
   file in the AAR, the documentation) is decided when publishing is set up.
+  The downloaded sources have their licence files, except Ada's archive
+  (`singleheader.zip`): its MIT text is in its repository.
+- **A fresh build needs bellard.org.** The build downloads QuickJS from
+  bellard.org, its only source (`native/cmake/deps.cmake`), as it downloads
+  the other native sources from GitHub. When that server is down, a new
+  clone, a CI run and a pin change cannot build. A CI cache of
+  `native/.deps`, keyed on the hash of `native/cmake/deps.cmake`, would keep
+  CI building and save its download of about 60 MB.
 - **The close cannot stop every endless loop.** The engine stops JS with an
   error that JS cannot catch (specs/engine.md, "Closing"), but QuickJS
   changes that error on some paths. An async function, a Promise executor,

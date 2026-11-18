@@ -2,5 +2,3 @@
 *.sh text eol=lf
 *.bat text eol=crlf
 *.jar binary
-# QuickJS as released (see its README.md).
-native/third_party/** linguist-vendored

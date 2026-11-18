@@ -16,7 +16,7 @@ android {
         aarMetadata { minCompileSdk = libs.versions.android.minCompileSdk.get().toInt() }
         // x86 runs only on old emulators.
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64") }
-        // Ada (third_party) is C++: libc++ is linked into libp2pml.so, which
+        // Ada is C++: libc++ is linked into libp2pml.so, which
         // exports none of it.
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }
     }
@@ -145,8 +145,9 @@ val npmCi =
 val sdk = androidComponents.sdkComponents
 val sdkCmakeBin = sdk.sdkDirectory.map { it.dir("cmake/${libs.versions.cmake.get()}/bin") }
 
-// The sources that CMakeLists.txt builds from .deps: libdatachannel and Mbed TLS, at the URLs and
-// sha256 of cmake/deps.cmake. Once for all ABIs and variants, so that no configure downloads.
+// The external sources that CMakeLists.txt builds from .deps: QuickJS, Ada, libdatachannel and
+// Mbed TLS, at the URLs and sha256 of cmake/deps.cmake. Once for all ABIs and variants, so that no
+// configure downloads.
 // Outside build/, as AGP's .cxx: clean keeps them, and .cxx's ninja files still find the
 // CMakeLists.txt files they list.
 val depsDir = layout.projectDirectory.dir(".deps")
@@ -170,7 +171,7 @@ val hostBuildDir = layout.buildDirectory.dir("host")
 val hostNativeBuild =
     tasks.register<HostNativeBuild>("hostNativeBuild") {
         // cmake/deps.cmake, not the downloaded files: its hashes fix their content.
-        sources.from("CMakeLists.txt", ".clang-tidy", "cmake", "src", "test", "third_party", npmCi)
+        sources.from("CMakeLists.txt", ".clang-tidy", "cmake", "src", "test", npmCi)
         dependsOn(fetchNativeDeps)
         sourceDir = layout.projectDirectory
         cmakeBin = sdkCmakeBin

@@ -20,7 +20,20 @@ set(P2PML_CLANG_TIDY "" CACHE FILEPATH "clang-tidy to run on our sources, every 
 
 find_package(Threads REQUIRED)
 
-set(QUICKJS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs)
+# The external sources, as released: QuickJS, Ada, and the WebRTC library.
+# Gradle downloads them (:native:fetchNativeDeps, cmake/deps.cmake) before it
+# runs CMake; Android Studio's sync runs CMake without that task.
+set(DEPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/.deps)
+foreach(source quickjs ada libdatachannel libdatachannel/deps/libjuice
+               libdatachannel/deps/usrsctp libdatachannel/deps/plog mbedtls)
+  if(NOT EXISTS ${DEPS_DIR}/${source}/.sha256)
+    message(FATAL_ERROR "${DEPS_DIR}/${source} is missing: run ./gradlew :native:fetchNativeDeps")
+  endif()
+  # A new pin configures again: QUICKJS_VERSION, for example, is read here.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DEPS_DIR}/${source}/.sha256)
+endforeach()
+
+set(QUICKJS_DIR ${DEPS_DIR}/quickjs)
 file(STRINGS ${QUICKJS_DIR}/VERSION QUICKJS_VERSION)
 
 # QuickJS as released, with the defines and code flags of its own Makefile.
@@ -95,10 +108,10 @@ embed_js(${CMAKE_BINARY_DIR}/core_bundle.c p2pml_core_bundle ${CORE_BUNDLE})
 set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c src/channel.c src/http.c src/websocket.c
   ${CMAKE_BINARY_DIR}/polyfills.c ${CMAKE_BINARY_DIR}/core_bundle.c)
 
-# Ada as released (third_party/ada): C++20, without exceptions, RTTI and
+# Ada as released: C++20, without exceptions, RTTI and
 # URLPattern (so no std::regex). Our C calls only its C API, ada_c.h.
 function(add_ada name)
-  add_library(${name} STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ada/ada.cpp)
+  add_library(${name} STATIC ${DEPS_DIR}/ada/ada.cpp)
   set_target_properties(${name} PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
@@ -109,17 +122,12 @@ function(add_ada name)
     VISIBILITY_INLINES_HIDDEN ON)
   target_compile_definitions(${name} PRIVATE ADA_INCLUDE_URL_PATTERN=0)
   target_compile_options(${name} PRIVATE -fno-exceptions -fno-rtti -w)
-  target_include_directories(${name} SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ada)
+  target_include_directories(${name} SYSTEM PUBLIC ${DEPS_DIR}/ada)
 endfunction()
 
 # WebRTC's libdatachannel with Mbed TLS (specs/engine.md, "The WebRTC
-# library"), from the sources that Gradle downloads (:native:fetchNativeDeps,
-# cmake/deps.cmake), as released. Data channels only. Its code and Mbed
-# TLS's are compiled without warnings, and their headers are system headers.
-set(DEPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/.deps)
-if(NOT EXISTS ${DEPS_DIR}/libdatachannel/.sha256 OR NOT EXISTS ${DEPS_DIR}/mbedtls/.sha256)
-  message(FATAL_ERROR "${DEPS_DIR} is missing: run ./gradlew :native:fetchNativeDeps")
-endif()
+# library"), as released. Data channels only. Its code and Mbed TLS's are
+# compiled without warnings, and their headers are system headers.
 function(add_webrtc)
   # The options are variables of this function only, not cache entries. The
   # policies make option() and set(CACHE) of the older CMakeLists.txt files,

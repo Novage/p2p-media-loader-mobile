@@ -1,6 +1,6 @@
-# The sources that the build downloads: WebRTC's libdatachannel and what it
-# needs (see specs/engine.md, "The WebRTC library"). Run as a script by the
-# Gradle task fetchNativeDeps:
+# The external sources that the native build compiles: QuickJS, Ada, and
+# WebRTC's libdatachannel with what it needs (see specs/engine.md, "Where the
+# code is"). Run as a script by the Gradle task fetchNativeDeps:
 #
 #   cmake -DDEPS_DIR=<dir> -P deps.cmake
 #
@@ -16,7 +16,7 @@ if(NOT DEPS_DIR)
 endif()
 
 # fetch(<folder> <url> <sha256>): the archive's top folder becomes
-# DEPS_DIR/<folder>.
+# DEPS_DIR/<folder>; an archive with no single top folder becomes it whole.
 function(fetch folder url sha256)
   set(destination "${DEPS_DIR}/${folder}")
   set(stamp "${destination}/.sha256")
@@ -41,10 +41,27 @@ function(fetch folder url sha256)
   # files are older, so that ninja and CMake build them again.
   file(ARCHIVE_EXTRACT INPUT "${archive}" DESTINATION "${temporary}" TOUCH)
   file(GLOB top LIST_DIRECTORIES true "${temporary}/*")
-  file(RENAME "${top}" "${destination}")
-  file(REMOVE_RECURSE "${temporary}" "${archive}")
+  list(LENGTH top count)
+  if(count EQUAL 1 AND IS_DIRECTORY "${top}")
+    file(RENAME "${top}" "${destination}")
+    file(REMOVE_RECURSE "${temporary}")
+  else()
+    file(RENAME "${temporary}" "${destination}")
+  endif()
+  file(REMOVE "${archive}")
   file(WRITE "${stamp}" "${sha256}")
 endfunction()
+
+# QuickJS, Bellard's release: the engine compiles a part of it
+# (native/CMakeLists.txt, add_quickjs). bellard.org is its only source.
+fetch(quickjs
+  https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz
+  b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a)
+# Ada, the WHATWG URL parser of Node.js: the single-header files of its
+# release (ada.cpp, ada.h, ada_c.h), which have no top folder.
+fetch(ada
+  https://github.com/ada-url/ada/releases/download/v4.0.0/singleheader.zip
+  d7fa5aea7b3805c91111231d1aaaeefc39ae20562a9f599e13c22471ee576b9f)
 
 # libdatachannel at a release tag. Its submodules, which its archive lacks,
 # go where its CMakeLists.txt finds them, at the commits that the tag pins.

@@ -9,10 +9,10 @@ the rules for the code that calls it.
 
 | Part                                     | Code                                                                                    |
 | ---------------------------------------- | --------------------------------------------------------------------------------------- |
-| QuickJS, Bellard's release as released   | `native/third_party/quickjs/` (version in its README.md)                                |
+| QuickJS, Bellard's release as released   | `native/cmake/deps.cmake` (the downloaded sources)                                      |
 | The engine: the loop, globals, eval      | `native/src/engine.h`, `native/src/engine.c`                                            |
 | The polyfills: JS, and their C helpers   | `native/src/polyfills/*.js`, `native/src/encoding.c`, `native/src/engine.c`             |
-| URL parsing: Ada (C++), and its C glue   | `native/third_party/ada/` (version in its README.md), `native/src/url.c`                |
+| URL parsing: Ada (C++), and its C glue   | `native/cmake/deps.cmake` (the downloaded sources), `native/src/url.c`                  |
 | The web core's bundle, as a module       | `native/package.json` (the npm package), `native/src/modules.c`                         |
 | The channels of the network's items      | `native/src/channel.h`, `native/src/channel.c`                                          |
 | fetch: the requests, and their events    | `native/src/http.h`, `native/src/http.c`, `native/src/polyfills/fetch.js`               |
@@ -27,6 +27,15 @@ native libraries such as libdatachannel call it with no JNI. The C code,
 QuickJS and Ada make one shared library, `libp2pml.so`. Ada is C++: the
 library links libc++ statically on Android, and exports only the JNI
 functions.
+
+The external sources are downloaded at build time, not kept in the
+repository: QuickJS, Ada, and the WebRTC library (see "The WebRTC
+library"). `native/cmake/deps.cmake` gives the URL and the sha256 of each
+archive, and the Gradle task `:native:fetchNativeDeps` downloads them once
+into `native/.deps` (outside `build/`, as AGP's `.cxx`: `clean` keeps them),
+before any CMake configure. A wrong hash fails the build. No source is
+patched, and their code is compiled without warnings and outside clang-tidy;
+their headers are system headers.
 
 ## One engine, one thread
 
@@ -294,21 +303,15 @@ build links it into the C test; no engine code uses it, so `libp2pml.so` does
 not link it, and the Android build only configures it. It needs libjuice
 (ICE), usrsctp (SCTP), plog (its log) and Mbed TLS (DTLS).
 
-- **The sources** are downloaded at build time, not kept in the repository:
-  `native/cmake/deps.cmake` gives the URL and the sha256 of each archive,
-  and the Gradle task `:native:fetchNativeDeps` downloads them once into
-  `native/.deps` (outside `build/`, as AGP's `.cxx`: `clean` keeps them),
-  before any CMake configure. A wrong hash fails the
-  build. No source is patched: libdatachannel at a release tag, its
-  dependencies at the commits that the tag pins as submodules, and Mbed TLS
-  as its 3.6 LTS release, which libdatachannel needs (Mbed TLS 3).
+- **The sources** are downloaded as the other external sources (see "Where
+  the code is"): libdatachannel at a release tag, its dependencies at the
+  commits that the tag pins as submodules, and Mbed TLS as its 3.6 LTS
+  release, which libdatachannel needs (Mbed TLS 3).
 - **Data channels only:** `NO_MEDIA` and `NO_WEBSOCKET` (`WebSocket` is
   the platform's, see "The platform's network clients"), and libjuice has
   no TURN server code. Mbed TLS gets one option beyond its defaults,
   `MBEDTLS_SSL_DTLS_SRTP` (`native/src/mbedtls_user_config.h`), without
   which libdatachannel does not compile, also with no media.
-- **The checks:** its code is compiled without warnings and outside
-  clang-tidy, as QuickJS and Ada; its headers are system headers.
 - **The test**, `native/test/rtc_test.c` (ctest `rtc`): two peer
   connections in one process connect (on the host, also with no network:
   only the host build lets libjuice gather loopback candidates), each with the

@@ -27,8 +27,9 @@ daemon, so an IDE that starts Gradle must see the same `PATH` as the
 shell; after a change to `PATH`, such as a new Node, run `./gradlew --stop`. Apps that use the library do not need Node.
 Android Studio's sync runs CMake without Gradle's tasks: on a new clone, run
 `./gradlew :native:npmCi :native:fetchNativeDeps` once before the first sync
-(the second downloads the WebRTC library's sources, about 60 MB, into
-`native/.deps`, which `clean` keeps). CMake makes that download: it takes a
+(the second downloads the sources of QuickJS, Ada and the WebRTC library: a
+download of about 60 MB, about 125 MB once extracted into `native/.deps`,
+which `clean` keeps). CMake makes that download: it takes a
 proxy only from the `https_proxy` variable, not from Gradle's settings.
 `./gradlew` uses the JDK that `JAVA_HOME` or `PATH` names; to use Android Studio's own, on a Mac:
 `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`.
