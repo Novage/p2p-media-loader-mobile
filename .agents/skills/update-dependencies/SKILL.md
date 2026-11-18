@@ -279,7 +279,9 @@ Update them as one group:
    callback after a delete must still find no engine). Check the release
    `libp2pml.so` of each ABI as the NDK section says, and compare the arm64
    size with the one before (3.75 MB with libdatachannel 0.24.6 and Mbed TLS
-   3.6.8). Then the device test (`JsWebRtcDeviceTest` logs the throughput).
+   3.6.8). Then the device test (`JsWebRtcDeviceTest` logs the throughput),
+   and the phone with the Node peer in one swarm (`tools/node-peer/README.md`,
+   "A phone in the swarm").
    `rtc_test` with `-DP2PML_RTC_TEST=ON` can still run alone on a device
    with `adb`, to tell a defect of the library from one of the binding.
 
@@ -328,6 +330,8 @@ p2p-media-loader-core@<version>`. Check that the lockfile's `integrity`
    change the tests with them, never to make a test pass.
 5. `./gradlew :library:connectedAndroidDeviceTest` on the phone: it logs the
    bundle's load time. Measure the size of `libp2pml.so` as for QuickJS.
+   Then the phone with the Node peer in one swarm
+   (`tools/node-peer/README.md`, "A phone in the swarm").
 6. The web peers of a mixed-swarm test must run a core with the same stream
    identity.
 
@@ -340,7 +344,9 @@ Prettier to check the Markdown and JS of the whole repository.
 1. In `tools/node-peer`: `npm outdated`, then update the versions in
    `package.json` and run `npm install`; the lockfile records the integrity
    of each package.
-2. `npm test` and `npm run type-check`.
+2. `npm test` and `npm run type-check`. After an update of
+   node-datachannel, also run the phone with the Node peer in one swarm
+   (the README, "A phone in the swarm").
 3. A new Prettier can format in a different way: run it on the files that
    AGENTS.md lists, and commit its output on its own.
 4. `p2p-media-loader-core` comes from the web repository with `npm run

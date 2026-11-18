@@ -111,6 +111,32 @@ It is where a shim list starts, not all of it:
 globals, and that the WebRTC the tool gives the core works the way the core
 uses it.
 
+## A phone in the swarm
+
+The library's device test `NodePeerDeviceTest` plays the same stream on an
+Android phone through the library's core. A short JS driver in the engine
+follows this tool's player: the highest bitrate, the core's live delay and
+buffer cap, one segment at a time, and playback reported every 250 ms. The
+test runs only when it gets a swarm ID. It passes when the phone downloaded
+bytes from a peer and uploaded bytes to one.
+
+The phone and the Mac must be on one network on which the peers can connect,
+for example one Wi-Fi network. Keep the phone awake for the run: its timers
+stop while it sleeps. Set "Stay awake" in the developer options, or run
+`adb shell svc power stayon usb`. From the repository root, with a new ID:
+
+```bash
+./gradlew :library:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.class=com.novage.p2pml.engine.NodePeerDeviceTest -Pandroid.testInstrumentationRunnerArguments.swarm=<id>
+```
+
+When logcat (tag `P2PML`) shows the phone's infohashes, start this tool in
+the same swarm for a shorter time than the phone's 4 minutes, so that the
+phone's run covers it: `npm start -- --swarm <id> --minutes 3`. The phone
+logs a line per segment and, at the end, a summary line with its bytes over
+HTTP and P2P and its uploaded bytes. Compare them with this tool's summary,
+which gives MiB with two decimals (labelled MB).
+The arguments `minutes` and `stream` change the phone's run.
+
 ## How the core runs
 
 The tool loads the core's self-contained HLS bundle,

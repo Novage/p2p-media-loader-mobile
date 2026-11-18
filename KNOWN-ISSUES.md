@@ -85,3 +85,12 @@ that describes the behaviour, not here.
   every server.
 - **A data channel never fires `error`.** libdatachannel has no error for a
   data channel; a channel that fails closes (`closing`, then `close`).
+- **A WebRTC event is lost when native memory is out.** When
+  `p2pml_channel_post` cannot copy an event on libdatachannel's thread, the
+  event is lost and the peer connection stays up, also for a `message`,
+  `open` or `datachannel` event that JS must get. The core sees the missing
+  bytes of a segment as a size mismatch or a timeout, and loads the segment
+  again. Not fixed: a close of the peer connection from inside
+  libdatachannel's callback can deadlock the library. A safe fix needs new
+  state: a task that is allocated in advance for each peer connection, which
+  then fails it on the engine thread.

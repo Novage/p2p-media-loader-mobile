@@ -304,3 +304,23 @@ and a phone's CPU, memory, temperature and background behaviour.
 
 Nothing in step 1 argues for the Kotlin core. Steps 2 and 3 decide on the
 remaining checks.
+
+### Results of step 2 so far
+
+**Interop of the phone with the Node peer (step 2.4c): passed.** The phone
+was the OnePlus 7, with the library's core on QuickJS, the WebRTC binding of
+libdatachannel, and Ktor's `fetch` and `WebSocket`. The Node peer ran on the
+Mac. Both played the BBB live stream at 1080p in one test swarm, through the
+core's default trackers. The phone and the Mac were on one Wi-Fi network.
+The phone ran `NodePeerDeviceTest` for 4 minutes: a JS driver that follows
+the Node peer's player (see `tools/node-peer/README.md`, "A phone in the
+swarm"). The Node peer joined a few seconds later, for 3 minutes. Both
+announced the same infohash, and they exchanged segments in both directions.
+The phone downloaded 51.27 MiB from the Node peer and uploaded 20.58 MiB to
+it. The Node peer counted the same amounts the other way, to 0.01 MiB, the
+precision of its summary. No segment failed, and the Node peer had no
+stall.
+
+What this does not show yet: the real player (step 2.5), peers behind NATs,
+more than two peers, browser peers (step 2.7), and the phone's CPU, memory
+and temperature (step 2.8).
