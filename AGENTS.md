@@ -100,7 +100,9 @@ its own, tested with web peers in the same swarm.
   takes or returns a `JSValue` says who frees it; QuickJS's leak check in the
   C tests catches a value not freed. Only the engine thread touches a runtime (see
   [`specs/engine.md`](specs/engine.md)). `native/third_party/` holds code as
-  released: never edit it, update it as its README says.
+  released: never edit it, update it as its README says. The sources that the
+  build downloads (`native/cmake/deps.cmake`: libdatachannel and Mbed TLS) are
+  pinned by URL and sha256, and never patched either.
 - **JS in `native/`:** the polyfills (`native/src/polyfills/`) reach C only
   through the natives object they get, and the JS tests are in
   `native/test/js/`, run by the C tests. Prettier formats both.
@@ -115,9 +117,9 @@ folder, so Claude Code loads the same files; an agent that loads no skills
 reads the `SKILL.md` of a task before it starts that task. On Windows the
 symlink needs `core.symlinks=true`.
 
-| Skill                                                              | Use it when                                                                                      |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| [update-dependencies](.agents/skills/update-dependencies/SKILL.md) | Updating any dependency: Gradle, the catalog, the NDK, CI, QuickJS, Ada, the web core, node-peer |
+| Skill                                                              | Use it when                                                                                                          |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| [update-dependencies](.agents/skills/update-dependencies/SKILL.md) | Updating any dependency: Gradle, the catalog, the NDK, CI, QuickJS, Ada, the WebRTC library, the web core, node-peer |
 
 ## Things that are deliberate, not oversights
 

@@ -3,7 +3,8 @@
 # Gradle task hostNativeBuild) makes the same library for the JVM host tests,
 # and the C tests with sanitizers.
 
-cmake_minimum_required(VERSION 3.22)
+# 3.25: add_subdirectory(... SYSTEM).
+cmake_minimum_required(VERSION 3.25)
 project(p2pml C CXX)
 
 set(CMAKE_C_STANDARD 11)
@@ -14,6 +15,7 @@ set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 
 option(P2PML_HOST "Build for the host: the JNI library for JVM tests and the C tests" OFF)
+option(P2PML_RTC_TEST "Build rtc_test also for Android, to run it on a device" OFF)
 set(P2PML_CLANG_TIDY "" CACHE FILEPATH "clang-tidy to run on our sources, every finding an error")
 
 find_package(Threads REQUIRED)
@@ -110,6 +112,57 @@ function(add_ada name)
   target_include_directories(${name} SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ada)
 endfunction()
 
+# WebRTC's libdatachannel with Mbed TLS (specs/engine.md, "The WebRTC
+# library"), from the sources that Gradle downloads (:native:fetchNativeDeps,
+# cmake/deps.cmake), as released. Data channels only. Its code and Mbed
+# TLS's are compiled without warnings, and their headers are system headers.
+set(DEPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/.deps)
+if(NOT EXISTS ${DEPS_DIR}/libdatachannel/.sha256 OR NOT EXISTS ${DEPS_DIR}/mbedtls/.sha256)
+  message(FATAL_ERROR "${DEPS_DIR} is missing: run ./gradlew :native:fetchNativeDeps")
+endif()
+function(add_webrtc)
+  # The options are variables of this function only, not cache entries. The
+  # policies make option() and set(CACHE) of the older CMakeLists.txt files,
+  # such as Mbed TLS's, keep a normal variable.
+  set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
+  # -w applies to all their targets, also to the targets that they add later.
+  string(APPEND CMAKE_C_FLAGS " -w")
+  string(APPEND CMAKE_CXX_FLAGS " -w")
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  set(BUILD_SHARED_LIBS OFF)
+  # No Python: else Mbed TLS runs a script of its release at each configure,
+  # only for a warning.
+  set(CMAKE_DISABLE_FIND_PACKAGE_Python3 ON)
+
+  set(ENABLE_PROGRAMS OFF)
+  set(ENABLE_TESTING OFF)
+  set(MBEDTLS_FATAL_WARNINGS OFF)
+  # Defines MBEDTLS_SSL_DTLS_SRTP, which libdatachannel needs to compile.
+  set(MBEDTLS_USER_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/mbedtls_user_config.h)
+  add_subdirectory(${DEPS_DIR}/mbedtls mbedtls EXCLUDE_FROM_ALL SYSTEM)
+  # libdatachannel uses this target, if it exists, in place of its own search.
+  # Imported, not an alias: libdatachannel's install(EXPORT) accepts only an
+  # imported target. mbedtls links mbedx509 and mbedcrypto.
+  add_library(MbedTLS::MbedTLS INTERFACE IMPORTED GLOBAL)
+  target_link_libraries(MbedTLS::MbedTLS INTERFACE mbedtls)
+
+  set(USE_MBEDTLS ON)
+  set(NO_MEDIA ON)
+  set(NO_WEBSOCKET ON)
+  set(NO_EXAMPLES ON)
+  set(NO_TESTS ON)
+  # libjuice: no TURN server code.
+  set(NO_SERVER ON)
+  # usrsctp: no debug code (its own default is on).
+  set(sctp_debug OFF)
+  # The C test on the host, also with no network: candidates on the loopback.
+  # Never for Android, whose descriptions go to other peers.
+  set(ENABLE_LOCALHOST_ADDRESS ${P2PML_HOST})
+  add_subdirectory(${DEPS_DIR}/libdatachannel libdatachannel EXCLUDE_FROM_ALL SYSTEM)
+endfunction()
+add_webrtc()
+
 add_quickjs(quickjs)
 add_ada(ada)
 # Ada turns on its development checks in a build without NDEBUG, such as an
@@ -168,4 +221,20 @@ if(P2PML_HOST)
   add_test(NAME engine COMMAND engine_test)
   # A broken loop hangs instead of failing.
   set_tests_properties(engine PROPERTIES TIMEOUT 60)
+endif()
+
+# The C test of libdatachannel: two peer connections in one process. On the
+# host with sanitizers on our code; for Android with P2PML_RTC_TEST, to run
+# it on a device with adb.
+if(P2PML_HOST OR P2PML_RTC_TEST)
+  add_executable(rtc_test test/rtc_test.c)
+  target_link_libraries(rtc_test PRIVATE datachannel-static Threads::Threads)
+  use_our_checks(rtc_test)
+  if(P2PML_HOST)
+    target_compile_options(rtc_test PRIVATE ${SANITIZERS})
+    target_link_options(rtc_test PRIVATE ${SANITIZERS})
+    add_test(NAME rtc COMMAND rtc_test)
+    # Five steps of 10 s, the certificates, and rtcCleanup's own 10 s limit.
+    set_tests_properties(rtc PROPERTIES TIMEOUT 90)
+  endif()
 endif()

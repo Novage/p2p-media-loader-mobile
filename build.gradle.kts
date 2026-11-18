@@ -60,6 +60,7 @@ spotless {
             ".clang-format",
             "native/.clang-tidy",
             "native/CMakeLists.txt",
+            "native/cmake/*.cmake",
             "library/*.pro",
         )
         trimTrailingWhitespace()

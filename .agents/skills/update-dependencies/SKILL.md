@@ -1,6 +1,6 @@
 ---
 name: update-dependencies
-description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog (Ktor, kotlinx-coroutines and OkHttp among them), the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the vendored native code (QuickJS, Ada), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
+description: Use when updating any dependency of this repository — Gradle and its wrapper, the plugins and libraries of the version catalog (Ktor, kotlinx-coroutines and OkHttp among them), the Android SDK levels, the NDK, clang-format and CMake, the JDK, Node and the CI actions, the vendored native code (QuickJS, Ada), the WebRTC library that the build downloads (libdatachannel with libjuice, usrsctp and plog, and Mbed TLS), the web core that the native build embeds (npm p2p-media-loader-core), the WPT URL test data, and tools/node-peer. Says where each one is pinned, where to find its releases, what to check, and how to verify and commit the update.
 ---
 
 # Updating dependencies
@@ -63,6 +63,7 @@ disagree, AGENTS.md is right.
 | GitHub Actions                                        | `.github/workflows/build.yml` (`uses:`)                                            | `gh api repos/<owner>/<action>/releases/latest`                                                                                                            |
 | QuickJS                                               | `native/third_party/quickjs/` (files, `VERSION`, README's sha256)                  | <https://bellard.org/quickjs/>                                                                                                                             |
 | Ada                                                   | `native/third_party/ada/` (files, README's sha256)                                 | `gh api repos/ada-url/ada/releases/latest` (each asset has a `digest`)                                                                                     |
+| libdatachannel, libjuice, usrsctp, plog, Mbed TLS     | `native/cmake/deps.cmake` (URL and sha256 of each)                                 | `gh api repos/paullouisageneau/libdatachannel/releases`; `gh api repos/Mbed-TLS/mbedtls/releases` (each asset has a `digest`)                              |
 | WPT URL test data                                     | `native/test/third_party/wpt-url/update.mjs` (`COMMIT`)                            | <https://github.com/web-platform-tests/wpt/tree/master/url>                                                                                                |
 | The web core of the library (`p2p-media-loader-core`) | `native/package.json` (exact version), `native/package-lock.json` (sha512)         | `npm view p2p-media-loader-core versions`; the web repository's tags and CHANGELOG.md                                                                      |
 | Node of CI                                            | `.github/workflows/build.yml` (`node-version`)                                     | the lowest Node that `README.md` names                                                                                                                     |
@@ -224,6 +225,41 @@ Follow `native/third_party/ada/README.md`. Then:
 - Check the exported symbols of `libp2pml.so` again (only JNI): Ada and
   libc++ are hidden by visibility and `--exclude-libs`.
 - Update the WPT URL data with it (next section). All WPT cases must pass.
+
+## libdatachannel and Mbed TLS
+
+The WebRTC library is downloaded at build time (specs/engine.md, "The WebRTC
+library"); `native/cmake/deps.cmake` pins each archive by URL and sha256.
+Update them as one group:
+
+1. libdatachannel: the newest release tag. Read its release notes for changes
+   to `rtc.h` and to the CMake options that `native/CMakeLists.txt` sets
+   (`add_webrtc`).
+2. libjuice, usrsctp and plog: the commits that the new tag pins as
+   submodules (`gh api 'repos/paullouisageneau/libdatachannel/contents/deps?ref=<tag>'`),
+   as GitHub archives of those commits. usrsctp comes from the maintainer's
+   fork, as the tag pins it.
+3. Mbed TLS: the newest release of the 3.6 LTS line, which libdatachannel
+   needs (`find_package(MbedTLS 3)`); its release asset, which has the
+   generated files. Check again whether `MBEDTLS_SSL_DTLS_SRTP` is still the
+   only option beyond its defaults that libdatachannel needs.
+4. The sha256 of each archive, and a second source for it: for Mbed TLS, the
+   `digest` that GitHub gives the asset; for a GitHub archive of a tag or a
+   commit, a `git clone` of that commit compared file by file with the
+   extracted archive (`diff -r --exclude=.git`). Download into an empty
+   folder outside the repository, and run none of its scripts. GitHub makes
+   the archives of tags and commits on request: if a hash fails with no pin
+   change, compare the archive with a clone in the same way before you
+   change the hash.
+5. Run the build: the fetch and the `rtc` C test on the host. The Android
+   build only configures the libraries while `libp2pml.so` does not link
+   them, so build `rtc_test` with `-DP2PML_RTC_TEST=ON` and the NDK's
+   toolchain file for each of the three ABIs: that is the Android compile
+   check. Then the phone: push the arm64 `rtc_test` with
+   `adb push … /data/local/tmp/`, run it, and remove it. Check its LOAD
+   segments (`llvm-readelf -lW`: aligned `0x4000`), its NEEDED libraries
+   (`liblog`, `libm`, `libdl`, `libc` only) and its stripped size against
+   the one before (2.24 MB with libdatachannel 0.24.6 and Mbed TLS 3.6.8).
 
 ## WPT URL test data
 

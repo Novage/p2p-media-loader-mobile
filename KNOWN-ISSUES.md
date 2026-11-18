@@ -15,9 +15,11 @@ that describes the behaviour, not here.
   includes QuickJS (MIT), Ada (MIT) and the web core's bundle:
   p2p-media-loader-core (Apache-2.0) with the packages bundled into it,
   m3u8-parser (Apache-2.0), @videojs/vhs-utils, global, debug and ms (MIT).
-  Their notices must reach the app's users. How the library gives its
-  notices to apps (a file in the AAR, the documentation) is decided when
-  publishing is set up.
+  When `libp2pml.so` links the WebRTC library, it adds libdatachannel and
+  libjuice (MPL-2.0, which also needs the app to say where their source is),
+  usrsctp (BSD-3-Clause), plog (MIT) and Mbed TLS (Apache-2.0). Their notices
+  must reach the app's users. How the library gives its notices to apps (a
+  file in the AAR, the documentation) is decided when publishing is set up.
 - **The close cannot stop every endless loop.** The engine stops JS with an
   error that JS cannot catch (specs/engine.md, "Closing"), but QuickJS
   changes that error on some paths. An async function, a Promise executor,

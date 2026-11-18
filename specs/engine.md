@@ -18,6 +18,7 @@ the rules for the code that calls it.
 | fetch: the requests, and their events    | `native/src/http.h`, `native/src/http.c`, `native/src/polyfills/fetch.js`               |
 | WebSocket: the sockets, and their events | `native/src/websocket.h`, `native/src/websocket.c`, `native/src/polyfills/websocket.js` |
 | The network clients, over Ktor           | `library/src/commonMain/…/http/HttpBridge.kt`, `WsBridge.kt`                            |
+| WebRTC's library, libdatachannel         | `native/cmake/deps.cmake` (the downloaded sources), `native/test/rtc_test.c`            |
 | The JNI glue, nothing else               | `native/src/jni.c`                                                                      |
 | The engine for Kotlin                    | `library/src/androidMain/…/engine/JsEngine.kt`                                          |
 
@@ -284,6 +285,38 @@ send a close frame of any code.
 
 Both clients run over OkHttp 5 on Android, which needs API 37: apps that use
 the library compile against Android API 37 or later (`minCompileSdk`).
+
+## The WebRTC library
+
+WebRTC's data channels come from libdatachannel (C++, with a C API,
+`rtc.h`), built from source with the rest of the native code. The host
+build links it into the C test; no engine code uses it, so `libp2pml.so` does
+not link it, and the Android build only configures it. It needs libjuice
+(ICE), usrsctp (SCTP), plog (its log) and Mbed TLS (DTLS).
+
+- **The sources** are downloaded at build time, not kept in the repository:
+  `native/cmake/deps.cmake` gives the URL and the sha256 of each archive,
+  and the Gradle task `:native:fetchNativeDeps` downloads them once into
+  `native/.deps` (outside `build/`, as AGP's `.cxx`: `clean` keeps them),
+  before any CMake configure. A wrong hash fails the
+  build. No source is patched: libdatachannel at a release tag, its
+  dependencies at the commits that the tag pins as submodules, and Mbed TLS
+  as its 3.6 LTS release, which libdatachannel needs (Mbed TLS 3).
+- **Data channels only:** `NO_MEDIA` and `NO_WEBSOCKET` (`WebSocket` is
+  the platform's, see "The platform's network clients"), and libjuice has
+  no TURN server code. Mbed TLS gets one option beyond its defaults,
+  `MBEDTLS_SSL_DTLS_SRTP` (`native/src/mbedtls_user_config.h`), without
+  which libdatachannel does not compile, also with no media.
+- **The checks:** its code is compiled without warnings and outside
+  clang-tidy, as QuickJS and Ada; its headers are system headers.
+- **The test**, `native/test/rtc_test.c` (ctest `rtc`): two peer
+  connections in one process connect (on the host, also with no network:
+  only the host build lets libjuice gather loopback candidates), each with the
+  other's whole description once its ICE gathering ends (as the core sends
+  its SDP through a tracker), and send text, binary, empty and 64 KiB − 1
+  messages both ways. With `-DP2PML_RTC_TEST=ON`, the Android build makes
+  the same test, to run on a device with `adb`: for each ABI, it is also the
+  check that the libraries compile for Android.
 
 ## Modules
 

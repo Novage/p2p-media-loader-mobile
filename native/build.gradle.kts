@@ -72,6 +72,8 @@ abstract class HostNativeBuild : DefaultTask() {
 
     @get:OutputFile abstract val testProgram: RegularFileProperty
 
+    @get:OutputFile abstract val rtcTestProgram: RegularFileProperty
+
     @TaskAction
     fun build() {
         val cmake = cmakeBin.file("cmake").get().asFile.path
@@ -105,6 +107,10 @@ abstract class HostNativeTest : DefaultTask() {
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val testProgram: RegularFileProperty
 
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val rtcTestProgram: RegularFileProperty
+
     @get:Internal abstract val cmakeBin: DirectoryProperty
 
     @get:OutputFile abstract val passed: RegularFileProperty
@@ -136,11 +142,26 @@ val npmCi =
         outputs.file(coreBundle)
     }
 
-// The CMake tasks of the Android build run after preBuild, for each variant and ABI.
-tasks.named("preBuild") { dependsOn(npmCi) }
-
 val sdk = androidComponents.sdkComponents
 val sdkCmakeBin = sdk.sdkDirectory.map { it.dir("cmake/${libs.versions.cmake.get()}/bin") }
+
+// The sources that CMakeLists.txt builds from .deps: libdatachannel and Mbed TLS, at the URLs and
+// sha256 of cmake/deps.cmake. Once for all ABIs and variants, so that no configure downloads.
+// Outside build/, as AGP's .cxx: clean keeps them, and .cxx's ninja files still find the
+// CMakeLists.txt files they list.
+val depsDir = layout.projectDirectory.dir(".deps")
+val fetchNativeDeps =
+    tasks.register<Exec>("fetchNativeDeps") {
+        val script = layout.projectDirectory.file("cmake/deps.cmake")
+        inputs.file(script).withPathSensitivity(PathSensitivity.NONE)
+        outputs.dir(depsDir)
+        executable = sdkCmakeBin.get().file("cmake").asFile.path
+        args("-DDEPS_DIR=${depsDir.asFile.path}", "-P", script.asFile.path)
+    }
+
+// The CMake tasks of the Android build run after preBuild, for each variant and ABI.
+tasks.named("preBuild") { dependsOn(npmCi, fetchNativeDeps) }
+
 // The NDK's tools for this computer.
 val ndkHost = rootProject.extra["ndkHost"] as String
 val ndkToolchain = sdk.ndkDirectory.map { it.dir("toolchains/llvm/prebuilt/$ndkHost") }
@@ -148,7 +169,9 @@ val hostBuildDir = layout.buildDirectory.dir("host")
 
 val hostNativeBuild =
     tasks.register<HostNativeBuild>("hostNativeBuild") {
-        sources.from("CMakeLists.txt", ".clang-tidy", "src", "test", "third_party", npmCi)
+        // cmake/deps.cmake, not the downloaded files: its hashes fix their content.
+        sources.from("CMakeLists.txt", ".clang-tidy", "cmake", "src", "test", "third_party", npmCi)
+        dependsOn(fetchNativeDeps)
         sourceDir = layout.projectDirectory
         cmakeBin = sdkCmakeBin
         jniHeader = ndkToolchain.map { it.file("sysroot/usr/include/jni.h") }
@@ -156,11 +179,13 @@ val hostNativeBuild =
         buildDir = hostBuildDir
         jniLibrary = hostBuildDir.map { it.file(System.mapLibraryName("p2pml")) }
         testProgram = hostBuildDir.map { it.file("engine_test") }
+        rtcTestProgram = hostBuildDir.map { it.file("rtc_test") }
     }
 
 val hostNativeTest =
     tasks.register<HostNativeTest>("hostNativeTest") {
         testProgram = hostNativeBuild.flatMap { it.testProgram }
+        rtcTestProgram = hostNativeBuild.flatMap { it.rtcTestProgram }
         cmakeBin = sdkCmakeBin
         passed = layout.buildDirectory.file("host-test/passed")
     }
