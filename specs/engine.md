@@ -17,14 +17,14 @@ the rules for the code that calls it.
 | The channels of the network's items      | `native/src/channel.h`, `native/src/channel.c`                                          |
 | fetch: the requests, and their events    | `native/src/http.h`, `native/src/http.c`, `native/src/polyfills/fetch.js`               |
 | WebSocket: the sockets, and their events | `native/src/websocket.h`, `native/src/websocket.c`, `native/src/polyfills/websocket.js` |
-| The network clients, over Ktor           | `library/src/commonMain/…/http/HttpBridge.kt`, `WsBridge.kt`                            |
+| The network clients, over Ktor           | `core/src/commonMain/…/http/HttpBridge.kt`, `WsBridge.kt`                               |
 | WebRTC's library, libdatachannel         | `native/cmake/deps.cmake` (the downloaded sources), `native/test/rtc_test.c`            |
 | WebRTC: the peers, over libdatachannel   | `native/src/rtc.h`, `native/src/rtc.c`, `native/src/polyfills/webrtc.js`                |
 | The player bridge: the core of a player  | `native/src/player.h`, `native/src/player.c`, `native/src/polyfills/player.js`          |
-| The player bridge for Kotlin             | `library/src/androidMain/…/player/CoreSession.kt`                                       |
-| The public Core and its settings         | `library/src/androidMain/…/Core.kt`, `CoreConfig.kt` (see [api.md](api.md))             |
+| The player bridge for Kotlin             | `core/src/androidMain/…/player/CoreSession.kt`                                          |
+| The public Core and its settings         | `core/src/androidMain/…/core/Core.kt`, `CoreConfig.kt` (see [api.md](api.md))           |
 | The JNI glue, nothing else               | `native/src/jni.c`                                                                      |
-| The engine for Kotlin                    | `library/src/androidMain/…/engine/JsEngine.kt`                                          |
+| The engine for Kotlin                    | `core/src/androidMain/…/engine/JsEngine.kt`                                             |
 
 The engine is plain C, so that iOS calls the same code through cinterop, and
 native libraries such as libdatachannel call it with no JNI. The C code,

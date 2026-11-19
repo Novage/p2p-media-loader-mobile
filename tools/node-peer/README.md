@@ -126,7 +126,7 @@ stop while it sleeps. Set "Stay awake" in the developer options, or run
 `adb shell svc power stayon usb`. From the repository root, with a new ID:
 
 ```bash
-./gradlew :library:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.class=com.novage.p2pml.engine.NodePeerDeviceTest -Pandroid.testInstrumentationRunnerArguments.swarm=<id>
+./gradlew :core:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.class=com.novage.p2pml.engine.NodePeerDeviceTest -Pandroid.testInstrumentationRunnerArguments.swarm=<id>
 ```
 
 When logcat (tag `P2PML`) shows the phone's infohashes, start this tool in

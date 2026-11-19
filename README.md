@@ -36,11 +36,11 @@ proxy only from the `https_proxy` variable, not from Gradle's settings.
 Set the SDK's path in `ANDROID_HOME` or in `local.properties` (`sdk.dir=…`), or
 open the project in Android Studio, which writes `local.properties`.
 
-| Gradle module     | What it is                                              |
-| ----------------- | ------------------------------------------------------- |
-| `library`         | The Kotlin Multiplatform library                        |
-| `native`          | QuickJS, the JS engine in C, and the web core's bundle  |
-| `samples/android` | A sample app that plays the BBB live stream with Media3 |
+| Gradle module     | What it is                                                                                         |
+| ----------------- | -------------------------------------------------------------------------------------------------- |
+| `core`            | The public `Core`, and the Kotlin side of the engine that runs the web core (Kotlin Multiplatform) |
+| `native`          | QuickJS, the JS engine in C, and the web core's bundle                                             |
+| `samples/android` | A sample app that plays the BBB live stream with Media3                                            |
 
 `tools/node-peer` is a Node tool, not a Gradle module: it runs the web core as
 a peer; see its README.

@@ -130,7 +130,7 @@ Then:
    and the Kotlin version it needs.
 2. OkHttp: the catalog's `okhttp` is the version that `ktor-client-okhttp`
    depends on, so that `mockwebserver3` tests the same OkHttp. Check it with
-   `./gradlew :library:dependencies --configuration androidRuntimeClasspath`.
+   `./gradlew :core:dependencies --configuration androidRuntimeClasspath`.
 3. A new OkHttp can raise the `compileSdk` that apps need (OkHttp 5.5.1 needs
    API 37): the build stops at `checkAndroidMainAarMetadata`. Raising
    `compileSdk` and `minCompileSdk` changes what apps compile against: ask
@@ -180,7 +180,7 @@ still matches.
 
 - CI builds with the lowest JDK that `README.md` names; change both together.
   A newer JDK on a developer's computer must still work: the library's
-  bytecode target is pinned (`jvmTarget` in `library/build.gradle.kts`), not
+  bytecode target is pinned (`jvmTarget` in `core/build.gradle.kts`), not
   taken from the JDK.
 - Update each `uses:` of `.github/workflows/build.yml` to its newest major
   version, and read its release notes for changed inputs (such as
@@ -330,7 +330,7 @@ p2p-media-loader-core@<version>`. Check that the lockfile's `integrity`
    `native/test/js/core_test.js`, `JsCoreTest.kt` and
    `JsEngineDeviceTest.kt`. When the web repository changes those vectors,
    change the tests with them, never to make a test pass.
-5. `./gradlew :library:connectedAndroidDeviceTest` on the phone: it logs the
+5. `./gradlew :core:connectedAndroidDeviceTest` on the phone: it logs the
    bundle's load time. Measure the size of `libp2pml.so` as for QuickJS.
    Then the phone with the Node peer in one swarm
    (`tools/node-peer/README.md`, "A phone in the swarm").
@@ -364,7 +364,7 @@ For every update, before you report it done:
 2. `./gradlew build` a second time: the configuration cache is reused.
 3. For a change to the NDK, CMake, QuickJS, Ada, the web core or the C or
    C++ flags:
-   `./gradlew :library:connectedAndroidDeviceTest` on the phone. Ask the user
+   `./gradlew :core:connectedAndroidDeviceTest` on the phone. Ask the user
    to connect it.
 4. After the push that the user asks for: the CI run of the commit passes
    (`gh run list --branch <branch>`, then `gh run watch <id>`).

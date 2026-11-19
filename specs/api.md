@@ -4,6 +4,25 @@ The library's API is the one of the web library, P2P Media Loader, with the
 same names, shapes and meanings, so that its documentation and its users'
 knowledge carry over. Where Kotlin must differ from JS, this spec says so.
 
+## Modules and packages
+
+As the web library has a package for its core and one for each player
+(`p2p-media-loader-core`, `p2p-media-loader-hlsjs`, ...), the library has a
+module for its core and one for each player integration. The table gives each
+module's public package; its internal code can be in other packages, such as
+`:core`'s engine in `com.novage.p2pml.engine`.
+
+| Gradle module | Maven artifact            | Kotlin package            | What it is                       |
+| ------------- | ------------------------- | ------------------------- | -------------------------------- |
+| `:core`       | `p2p-media-loader-core`   | `com.novage.p2pml.core`   | `Core`, its settings, the engine |
+| `:media3`     | `p2p-media-loader-media3` | `com.novage.p2pml.media3` | The Media3 integration (Android) |
+| `:proxy`      | `p2p-media-loader-proxy`  | `com.novage.p2pml.proxy`  | A local server for URL players   |
+
+On iOS, the modules for iOS are exported into one framework. Kotlin packages
+do not appear in Swift, so Swift sees the class names as they are while no
+two public classes of the modules have the same name; Kotlin/Native renames a
+class whose name clashes.
+
 ## Two levels
 
 As in the web library, an app uses an engine for its player, and the engine

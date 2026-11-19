@@ -49,10 +49,11 @@ that describes the behaviour, not here.
   core: the events (`addEventListener`, `removeEventListener`),
   `applyDynamicConfig`, `updatePlayback`, `setManifestResponseUrl`,
   `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
-  (`isSegmentIndex`, `processSegmentIndex`). There is no player engine
-  (`Media3P2PEngine`) yet (specs/api.md). With no
-  playback state, the core sees an empty buffer: every request is urgent and
-  goes over HTTP, so a player gets no segment from peers.
+  (`isSegmentIndex`, `processSegmentIndex`). There is no player integration
+  yet: no `:media3` (`Media3P2PEngine`) and no `:proxy` module
+  (specs/api.md). With no playback state, the core sees an empty buffer:
+  every request is urgent and goes over HTTP, so a player gets no segment
+  from peers.
 - **A Gradle deprecation does not fail the build.** Two plugins call
   `Configuration.setVisible`, which Gradle 9.9 deprecates: detekt
   2.0.0-alpha.6 (`DetektBasePlugin`, `DetektPlugin`) and Spotless 8.9.0

@@ -84,7 +84,7 @@ its own, tested with web peers in the same swarm.
     Linux for each push and pull request to `next`; it does not run the
     device test or the `tools/node-peer` checks.
   - For a change to `native/` or to the engine: also
-    `./gradlew :library:connectedAndroidDeviceTest` on a connected device.
+    `./gradlew :core:connectedAndroidDeviceTest` on a connected device.
     For a change to the WebRTC binding, also the phone with the Node peer
     in one swarm (`tools/node-peer/README.md`, "A phone in the swarm").
   - For a change in `tools/node-peer`: `npm test` and `npm run type-check`

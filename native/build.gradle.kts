@@ -4,7 +4,7 @@ plugins { alias(libs.plugins.android.library) }
 
 // The native code: QuickJS and the engine in one shared library, libp2pml.so.
 // A module of its own, because the KMP Android library plugin has no native
-// build; :library depends on it.
+// build; :core depends on it.
 android {
     namespace = "com.novage.p2pml.nativelib"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
-        // Pinned, as :library's: by default it follows compileSdk.
+        // Pinned, as :core's: by default it follows compileSdk.
         aarMetadata { minCompileSdk = libs.versions.android.minCompileSdk.get().toInt() }
         // x86 runs only on old emulators.
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64") }
@@ -38,7 +38,7 @@ android {
 
 /**
  * Builds the native code for this computer with the SDK's CMake and the NDK's clang-tidy: the JNI
- * library for the JVM tests of :library, and the C tests (see CMakeLists.txt).
+ * library for the JVM tests of :core, and the C tests (see CMakeLists.txt).
  */
 abstract class HostNativeBuild : DefaultTask() {
     @get:Inject abstract val exec: ExecOperations
