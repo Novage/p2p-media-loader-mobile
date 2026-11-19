@@ -5,8 +5,8 @@ import com.novage.p2pml.http.HttpEvents
 import com.novage.p2pml.http.SharedHttpClient
 import com.novage.p2pml.http.WsBridge
 import com.novage.p2pml.http.WsEvents
+import com.novage.p2pml.player.Answer
 import com.novage.p2pml.player.CoreSession
-import com.novage.p2pml.player.SegmentResult
 import java.util.concurrent.TimeUnit
 
 /**
@@ -129,13 +129,17 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
                 }
             val playerSink =
                 object : NativeEngine.PlayerSink {
-                    override fun miss(id: Int) = player.answer(id, SegmentResult.Miss)
+                    override fun value(id: Int, json: ByteArray) =
+                        player.answer(id, Answer.Value(json.decodeToString()))
 
-                    override fun segment(id: Int, bytes: ByteArray) =
-                        player.answer(id, SegmentResult.Data(bytes))
+                    override fun segment(id: Int, bytes: ByteArray, bandwidth: Double) =
+                        player.answer(id, Answer.Segment(bytes, bandwidth))
 
-                    override fun fail(id: Int, message: ByteArray) =
-                        player.answer(id, SegmentResult.Failed(message.decodeToString()))
+                    override fun fail(id: Int, type: ByteArray, message: ByteArray) =
+                        player.answer(
+                            id,
+                            Answer.Failed(type.decodeToString(), message.decodeToString()),
+                        )
                 }
             if (!NativeEngine.run(handle, sink, httpSink, wsSink, playerSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")

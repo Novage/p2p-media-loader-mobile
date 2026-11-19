@@ -93,9 +93,9 @@ internal object NativeEngine {
     ): Boolean
 
     /**
-     * Engine thread only, in a task: gives event [name] of load [id] to the player bridge
-     * (native/src/player.h), with its [texts], UTF-8 or null for none. False when JS did not take
-     * it. Throws [OutOfMemoryError].
+     * Engine thread only, in a task: gives event [name] of call [id] (a query or a load; 0 for an
+     * event with no answer) to the player bridge (native/src/player.h), with its [texts], UTF-8 or
+     * null for none. False when JS did not take it. Throws [OutOfMemoryError].
      */
     @JvmStatic
     external fun playerEvent(engine: Long, name: String, id: Int, texts: Array<ByteArray?>): Boolean
@@ -130,13 +130,18 @@ internal object NativeEngine {
 
     /**
      * The answers of the player bridge, on the engine thread (native/src/player.h): one for each
-     * load. Messages are UTF-8 bytes, as [WsSink]'s text.
+     * call. Texts are UTF-8 bytes, as [WsSink]'s text.
      */
     interface PlayerSink {
-        fun miss(id: Int)
+        /** The answer of query [id]: JSON. */
+        fun value(id: Int, json: ByteArray)
 
-        fun segment(id: Int, bytes: ByteArray)
+        /**
+         * The whole segment of load [id], and the bandwidth (bits per second) the core measured.
+         */
+        fun segment(id: Int, bytes: ByteArray, bandwidth: Double)
 
-        fun fail(id: Int, message: ByteArray)
+        /** Load [id] failed: the error's [type], such as "failed" or "aborted", and its message. */
+        fun fail(id: Int, type: ByteArray, message: ByteArray)
     }
 }

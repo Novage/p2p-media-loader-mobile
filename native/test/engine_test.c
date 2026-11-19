@@ -153,33 +153,43 @@ static void fake_ws_cancel(void *data, int32_t id) {
 }
 
 // The fake player client of every test engine: fakePlayer.answers records
-// each answer to a load as {id, kind}, with `data` (a Uint8Array) for
-// "segment" and `message` for "fail". push_answer takes `value`, the member
-// `key` of the answer; with no key, `value` must be JS_UNDEFINED.
-static void push_answer(JSContext *context, int32_t id, const char *kind, const char *key,
-                        JSValue value) {
+// each answer to a call as {id, kind}: "value" with `value` (the JSON text),
+// "segment" with `data` (a Uint8Array) and `bandwidth`, "fail" with `type` and
+// `message`. new_answer makes the {id, kind} object; its caller sets the other
+// members and pushes it.
+static JSValue new_answer(JSContext *context, int32_t id, const char *kind) {
   JSValue answer = JS_NewObject(context);
   CHECK(JS_SetPropertyStr(context, answer, "id", JS_NewInt32(context, id)) >= 0);
   CHECK(JS_SetPropertyStr(context, answer, "kind", JS_NewString(context, kind)) >= 0);
-  if (key != NULL) {
-    CHECK(JS_SetPropertyStr(context, answer, key, value) >= 0);
-  }
+  return answer;
+}
+
+static void fake_player_value(void *data, int32_t id, const uint8_t *json, size_t length) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue answer = new_answer(context, id, "value");
+  CHECK(JS_SetPropertyStr(context, answer, "value",
+                          JS_NewStringLen(context, (const char *)json, length)) >= 0);
   push_to(context, "fakePlayer", "answers", answer);
 }
 
-static void fake_player_miss(void *data, int32_t id) {
-  push_answer(p2pml_engine_context(data), id, "miss", NULL, JS_UNDEFINED);
+static void fake_player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length,
+                                double bandwidth) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue answer = new_answer(context, id, "segment");
+  CHECK(JS_SetPropertyStr(context, answer, "data", bytes_value(context, bytes, length)) >= 0);
+  CHECK(JS_SetPropertyStr(context, answer, "bandwidth", JS_NewFloat64(context, bandwidth)) >= 0);
+  push_to(context, "fakePlayer", "answers", answer);
 }
 
-static void fake_player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length) {
+static void fake_player_fail(void *data, int32_t id, const uint8_t *type, size_t type_length,
+                             const uint8_t *message, size_t message_length) {
   JSContext *context = p2pml_engine_context(data);
-  push_answer(context, id, "segment", "data", bytes_value(context, bytes, length));
-}
-
-static void fake_player_fail(void *data, int32_t id, const uint8_t *message, size_t length) {
-  JSContext *context = p2pml_engine_context(data);
-  push_answer(context, id, "fail", "message",
-              JS_NewStringLen(context, (const char *)message, length));
+  JSValue answer = new_answer(context, id, "fail");
+  CHECK(JS_SetPropertyStr(context, answer, "type",
+                          JS_NewStringLen(context, (const char *)type, type_length)) >= 0);
+  CHECK(JS_SetPropertyStr(context, answer, "message",
+                          JS_NewStringLen(context, (const char *)message, message_length)) >= 0);
+  push_to(context, "fakePlayer", "answers", answer);
 }
 
 static void fake_start(void *data, int32_t id, const char *method, const char *url,
@@ -212,7 +222,7 @@ static void *run_engine(void *data) {
                              .close = fake_ws_close,
                              .cancel = fake_ws_cancel,
                              .data = args->engine};
-  p2pml_player_client fake_player = {.miss = fake_player_miss,
+  p2pml_player_client fake_player = {.value = fake_player_value,
                                      .segment = fake_player_segment,
                                      .fail = fake_player_fail,
                                      .data = args->engine};
@@ -583,7 +593,8 @@ static void free_player_event(void *data) {
 static void run_player_event(p2pml_engine *engine, void *data) {
   player_event *event = data;
   if (!p2pml_player_event(engine, event->name, event->id, event->count, event->texts)) {
-    push_answer(p2pml_engine_context(engine), event->id, "notTaken", NULL, JS_UNDEFINED);
+    JSContext *context = p2pml_engine_context(engine);
+    push_to(context, "fakePlayer", "answers", new_answer(context, event->id, "notTaken"));
   }
   free_player_event(event);
 }
@@ -1250,7 +1261,7 @@ static void test_a_message_that_js_cannot_take_fails_the_peer(void) {
 }
 
 // A player event that JS does not take is reported, and the platform learns
-// it: for a load, the player then loads the segment itself.
+// it: the call fails at once there.
 static void test_a_player_event_that_js_does_not_take(void) {
   captured_log log = {0};
   run_script("fakePlayer.send('unknown', 5);"
@@ -1288,9 +1299,9 @@ static void test_the_close_with_a_load_open(void) {
   nanosleep(&(struct timespec){.tv_nsec = 100L * 1000 * 1000}, NULL);
 }
 
-// stop() fails the open loads also when the core's destroy() throws: the
+// destroy() fails the open loads also when the core's destroy() throws: the
 // error is reported, and no load waits for good.
-static void test_stop_answers_when_destroy_throws(void) {
+static void test_destroy_answers_when_it_throws(void) {
   captured_log log = {0};
   run_script("const base = 'https://example.com/hls/';"
              "import('p2p-media-loader-core').then(({ Core }) => {"
@@ -1314,11 +1325,11 @@ static void test_stop_answers_when_destroy_throws(void) {
              "      setTimeout(wait, 10);"
              "      return;"
              "    }"
-             "    fakePlayer.send('stop', 0);"
+             "    fakePlayer.send('destroy', 0);"
              "    setTimeout(() => {"
              "      Core.prototype.destroy = destroy;"
              "      const answers = fakePlayer.answers.filter((a) => a.id === 1);"
-             "      console.log(answers.map((a) => a.kind + ' ' + a.message).join());"
+             "      console.log(answers.map((a) => a.kind + ' ' + a.type).join());"
              "      closeEngine();"
              "    }, 50);"
              "  };"
@@ -1327,7 +1338,7 @@ static void test_stop_answers_when_destroy_throws(void) {
              &log);
   CHECK(log.count == 2);
   check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught Error: destroy failed", false);
-  check_line(&log, 1, P2PML_LOG_INFO, "fail stopped", true);
+  check_line(&log, 1, P2PML_LOG_INFO, "fail aborted", true);
   free_log(&log);
 }
 
@@ -1429,7 +1440,7 @@ int main(void) {
   test_an_event_that_js_cannot_take_fails_the_request();
   test_a_player_event_that_js_does_not_take();
   test_the_close_with_a_load_open();
-  test_stop_answers_when_destroy_throws();
+  test_destroy_answers_when_it_throws();
   test_js_files();
   puts("engine tests passed");
   return 0;

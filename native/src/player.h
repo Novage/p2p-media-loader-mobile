@@ -13,16 +13,19 @@
 #include "engine.h"
 #include "quickjs.h"
 
-// The platform's side of the bridge: the answers to the loads, one for each
-// load. The engine calls it on the engine thread; the bytes stay the engine's,
-// valid only during the call.
+// The platform's side of the bridge: the answers to its calls, one for each.
+// The engine calls it on the engine thread; the bytes stay the engine's, valid
+// only during the call. Texts are UTF-8.
 struct p2pml_player_client {
-  // The core does not load segment `id`: the player loads it itself.
-  void (*miss)(void *data, int32_t id);
-  // The whole segment of load `id`.
-  void (*segment)(void *data, int32_t id, const uint8_t *bytes, size_t length);
-  // Load `id` failed: `message`, UTF-8, says why.
-  void (*fail)(void *data, int32_t id, const uint8_t *message, size_t length);
+  // The answer of query `id`: `length` bytes of JSON.
+  void (*value)(void *data, int32_t id, const uint8_t *json, size_t length);
+  // The whole segment of load `id`, and the bandwidth (bits per second) that
+  // the core measured for it.
+  void (*segment)(void *data, int32_t id, const uint8_t *bytes, size_t length, double bandwidth);
+  // Load `id` failed: the type of the error, such as "failed" or "aborted",
+  // and its message.
+  void (*fail)(void *data, int32_t id, const uint8_t *type, size_t type_length,
+               const uint8_t *message, size_t message_length);
   void *data;
 };
 
@@ -41,7 +44,7 @@ typedef struct p2pml_player p2pml_player;
 p2pml_player *p2pml_player_new(const p2pml_player_client *client);
 // The engine's state (engine.c).
 p2pml_player *p2pml_engine_player(p2pml_engine *engine);
-// Adds playerListen, playerMiss, playerData and playerFail to `natives`,
+// Adds playerListen, playerValue, playerData and playerFail to `natives`,
 // which stays the caller's. False when out of memory.
 bool p2pml_player_add(JSContext *context, JSValueConst natives);
 // Frees the state, before the runtime is freed.

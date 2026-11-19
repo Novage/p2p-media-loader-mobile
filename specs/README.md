@@ -14,6 +14,7 @@ identity and the core's behaviour are specified in the web repository,
 | ---------------------- | ---------------------------------------------------------------------------------------- |
 | [scope.md](scope.md)   | Platforms, players and streams, and which requests get P2P                               |
 | [engine.md](engine.md) | The JS engine that runs the core: its thread, loop, closing, globals and uncaught errors |
+| [api.md](api.md)       | The public API: the web library's, and where Kotlin differs                              |
 
 ## Proposals
 

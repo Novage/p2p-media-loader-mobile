@@ -1,44 +1,57 @@
 // The player bridge (specs/engine.md, "The player bridge"): not a browser API,
-// but the library's glue around the core. The platform's player integration
-// sends its events (natives.playerListen, native/src/player.c):
-// - start(config): makes the core, with `config` (JSON) as its settings;
-// - manifest(url, requestedUrl, text): gives the core a manifest;
-// - load(id, url, range): loads a segment through the core; `range` is
-//   "start-end", inclusive, or undefined;
-// - abort(id): stops a load;
-// - stop(): destroys the core.
-// Each load gets one answer: natives.playerMiss when the core does not load
-// it, playerData with the whole segment, or playerFail.
+// but the library's glue around the core, which gives the Kotlin Core the
+// JS core's calls (specs/api.md). The platform sends its events
+// (natives.playerListen, native/src/player.c); `range` is "start-end",
+// inclusive, or undefined:
+// - start(0, config): makes the core, with `config` (JSON) as its settings;
+// - manifest(0, url, requestedUrl, data): processManifest;
+// - loadable(id, url, range) and config(id): isSegmentLoadable and
+//   getConfig, answered at once with natives.playerValue(id, json);
+// - load(id, url, range): loadSegment, answered once, later, with
+//   playerData(id, bytes, bandwidth) or playerFail(id, type, message);
+// - abort(0, url, range): abortSegmentLoading;
+// - destroy(0): destroy, which readies the core for the next source.
 (natives) => {
-  const { playerListen, playerMiss, playerData, playerFail, reportError } =
+  const { playerListen, playerValue, playerData, playerFail, reportError } =
     natives;
   // Kept now, so that a script that replaces these globals changes nothing
   // here.
-  const { JSON, Map, Number, String, AbortController, Uint8Array } = globalThis;
+  const { JSON, Number, String, Uint8Array } = globalThis;
   const { toString } = Object.prototype;
 
-  // The core: undefined before start and after stop.
+  // The core: undefined before start.
   let core;
-  // The loads that have no answer yet: their AbortController, by id.
-  const loads = new Map();
+  // The loads that have no answer yet, by id.
+  const loads = new Set();
 
-  // The type of the core's errors, such as "failed", else the message.
-  const messageOf = (error) => String(error?.type || error?.message || error);
+  // A failure as the Kotlin Core's CoreRequestError: the type of the core's
+  // errors, such as "failed" or "aborted", and a message.
+  const fail = (id, error) =>
+    playerFail(
+      id,
+      String(error?.type || "failed"),
+      // The core's errors have a type and often no message.
+      String(error?.message || error?.type || error),
+    );
 
   // Sends the answer to load `id`, once: a failure when sending it throws in
   // JS. (When the JVM cannot take the bytes, the engine closes, and the load
-  // becomes a miss.)
+  // fails.)
   const settle = (id, send) => {
     if (loads.delete(id)) {
       try {
         send();
-      } catch (error) {
-        playerFail(id, messageOf(error));
+      } catch {
+        // A constant: the error itself may not convert.
+        playerFail(id, "failed", "the answer could not be sent");
       }
     }
   };
 
-  const parseRange = (range) => {
+  const rangeOf = (range) => {
+    if (range === undefined) {
+      return undefined;
+    }
     const dash = range.indexOf("-");
     return {
       start: Number(range.slice(0, dash)),
@@ -51,7 +64,7 @@
 
     start(id, config) {
       if (core !== undefined) {
-        throw new Error("the core is already started");
+        throw new Error("the core is already made");
       }
       // QuickJS loads the module in this task's Promise jobs, which run
       // before the next task: the next event finds the core.
@@ -77,53 +90,56 @@
         .catch(reportError);
     },
 
-    manifest(id, url, requestedUrl, text) {
+    manifest(id, url, requestedUrl, data) {
       try {
-        core?.processManifest({ url, requestedUrl, data: text });
+        core?.processManifest({ url, requestedUrl, data });
       } catch (error) {
         // A manifest that the core cannot read costs P2P, not playback.
         reportError(error);
       }
     },
 
+    loadable(id, url, range) {
+      const loadable =
+        core !== undefined && core.isSegmentLoadable(url, rangeOf(range));
+      playerValue(id, JSON.stringify(loadable));
+    },
+
+    config(id) {
+      playerValue(id, JSON.stringify(core?.getConfig() ?? null));
+    },
+
     load(id, url, range) {
-      const byteRange = range === undefined ? undefined : parseRange(range);
-      if (core === undefined || !core.isSegmentLoadable(url, byteRange)) {
-        playerMiss(id);
+      if (core === undefined) {
+        playerFail(id, "failed", "no core");
         return;
       }
-      const controller = new AbortController();
-      loads.set(id, controller);
-      core.loadSegment(url, { byteRange, signal: controller.signal }).then(
-        (result) =>
-          settle(id, () => playerData(id, new Uint8Array(result.data))),
-        (error) => settle(id, () => playerFail(id, messageOf(error))),
+      loads.add(id);
+      core.loadSegment(url, { byteRange: rangeOf(range) }).then(
+        (response) =>
+          settle(id, () =>
+            playerData(id, new Uint8Array(response.data), response.bandwidth),
+          ),
+        (error) => settle(id, () => fail(id, error)),
       );
     },
 
-    abort(id) {
-      const controller = loads.get(id);
-      if (controller !== undefined) {
-        loads.delete(id);
-        controller.abort();
-        playerFail(id, "aborted");
-      }
+    abort(id, url, range) {
+      core?.abortSegmentLoading(url, rangeOf(range));
     },
 
-    stop() {
+    // As in JS, the core stays: destroy() readies it for the next source.
+    destroy() {
       // The loads first: destroy() can throw.
-      for (const [id, controller] of loads) {
+      for (const id of loads) {
         loads.delete(id);
-        controller.abort();
-        playerFail(id, "stopped");
+        playerFail(id, "aborted", "the core is destroyed");
       }
-      const destroyed = core;
-      core = undefined;
-      destroyed?.destroy();
+      core?.destroy();
     },
   };
 
-  // An exception goes back to the platform as "not taken": for a load, the
-  // player then loads the segment itself.
+  // An exception goes back to the platform as "not taken": the call fails at
+  // once there.
   playerListen((id, name, ...texts) => events[name](id, ...texts));
 };

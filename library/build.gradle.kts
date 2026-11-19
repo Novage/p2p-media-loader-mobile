@@ -59,7 +59,10 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
         }
         commonTest.dependencies { implementation(kotlin("test")) }
-        getByName("androidHostTest").dependencies { implementation(libs.okhttp.mockwebserver3) }
+        getByName("androidHostTest").dependencies {
+            implementation(libs.okhttp.mockwebserver3)
+            implementation(libs.org.json)
+        }
         getByName("androidDeviceTest").dependencies {
             implementation(kotlin("test"))
             implementation(libs.androidx.test.runner)

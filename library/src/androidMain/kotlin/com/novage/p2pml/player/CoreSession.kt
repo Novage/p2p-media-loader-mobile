@@ -5,22 +5,22 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-/** The core's answer to a segment load. */
-internal sealed interface SegmentResult {
-    /** The core does not load the segment: the player loads it itself. */
-    data object Miss : SegmentResult
+/** The bridge's answer to a call. */
+internal sealed interface Answer {
+    /** The answer of a query, as JSON. */
+    class Value(val json: String) : Answer
 
-    /** The whole segment. */
-    class Data(val bytes: ByteArray) : SegmentResult
+    /** The whole segment of a load, and the bandwidth (bits per second) the core measured. */
+    class Segment(val bytes: ByteArray, val bandwidth: Double) : Answer
 
-    /** The load failed: the player can try again. */
-    data class Failed(val message: String) : SegmentResult
+    /** A failed load: the error's type, such as "failed" or "aborted", and its message. */
+    class Failed(val type: String, val message: String) : Answer
 }
 
 /** The engine's side of the player bridge (native/src/polyfills/player.js). */
 internal fun interface PlayerPort {
     /**
-     * From any thread: gives event [name] of load [id] to the bridge later, on the engine thread,
+     * From any thread: gives event [name] of call [id] to the bridge later, on the engine thread,
      * with its [texts]; null is none. [notTaken] runs when JS did not take it: there, or at once on
      * this thread when the engine is closed.
      */
@@ -28,87 +28,70 @@ internal fun interface PlayerPort {
 }
 
 /**
- * The core of one player, in an engine: the player gives it its manifests and loads its segments
- * through it (specs/engine.md, "The player bridge"). Any thread. Each load gets one
- * [SegmentResult]; when the engine closes, every open load is a [SegmentResult.Miss], so that the
- * player loads the segment itself and never waits for good.
+ * The core in an engine, as the bridge gives its calls (specs/engine.md, "The player bridge"). Any
+ * thread. A query and a load get one [Answer] each, which the caller waits for; a call that JS does
+ * not take, an open call when the engine closes, and a call after it fail, so that no caller waits
+ * for good.
  */
 internal class CoreSession(private val port: PlayerPort) {
     private val lastId = AtomicInteger()
-    // The loads that have no answer yet.
-    private val loads = ConcurrentHashMap<Int, CompletableFuture<SegmentResult>>()
+    // The calls that have no answer yet.
+    private val calls = ConcurrentHashMap<Int, CompletableFuture<Answer>>()
 
-    /**
-     * Makes the core, with [config] as its settings: a JSON object. A second start needs a [stop]
-     * before it: else it is reported, and the core keeps its settings.
-     */
-    fun start(config: String) {
-        port.send("start", 0, listOf(config)) {}
+    /** An event with no answer. */
+    fun send(name: String, texts: List<String?> = emptyList()) {
+        port.send(name, 0, texts) {}
     }
 
     /**
-     * Gives the core a manifest: [url] after redirects, [requestedUrl] as the player asked for it
-     * when a redirect changed it, and its [text].
+     * Query [name] (`loadable`, `config`): its JSON, or null when it failed (not taken, or the
+     * engine closed).
+     *
+     * @throws InterruptedIOException when the waiting thread is interrupted.
      */
-    fun processManifest(url: String, requestedUrl: String?, text: String) {
-        port.send("manifest", 0, listOf(url, requestedUrl, text)) {}
-    }
+    fun query(name: String, texts: List<String?> = emptyList()): String? =
+        (call(name, texts).await() as? Answer.Value)?.json
 
-    /**
-     * Loads segment [url], with its byte [range] (inclusive) if it has one, through the core. The
-     * core keeps one load for each stream type: a new load of the same type fails the open one with
-     * "aborted".
-     */
-    fun load(url: String, range: LongRange?): SegmentLoad {
+    /** Starts a call that has an answer; [Call.await] waits for it. */
+    fun call(name: String, texts: List<String?>): Call {
         val id = lastId.incrementAndGet()
-        val load = SegmentLoad(id)
-        loads[id] = load.result
-        val texts = listOf(url, range?.let { "${it.first}-${it.last}" })
-        port.send("load", id, texts) { answer(id, SegmentResult.Miss) }
-        return load
+        val call = Call(id)
+        calls[id] = call.answer
+        port.send(name, id, texts) { answer(id, closedFailure()) }
+        return call
     }
 
-    /** Destroys the core: each open load fails. [start] can make it again. */
-    fun stop() {
-        port.send("stop", 0, emptyList()) {}
+    /** The bridge's answer to call [id], on the engine thread. */
+    fun answer(id: Int, answer: Answer) {
+        calls.remove(id)?.complete(answer)
     }
 
-    /** The bridge's answer to load [id], on the engine thread. */
-    fun answer(id: Int, result: SegmentResult) {
-        loads.remove(id)?.complete(result)
-    }
-
-    /** After the engine closed: every open load is a miss. */
+    /** After the engine closed: every open call fails. */
     fun engineClosed() {
-        for (id in loads.keys) {
-            answer(id, SegmentResult.Miss)
+        for (id in calls.keys) {
+            answer(id, closedFailure())
         }
     }
 
-    /** A load of a segment through the core. */
-    inner class SegmentLoad internal constructor(private val id: Int) {
-        internal val result = CompletableFuture<SegmentResult>()
+    private fun closedFailure() = Answer.Failed("failed", "the engine did not take the call")
+
+    /** A call that has an answer. */
+    inner class Call internal constructor(private val id: Int) {
+        internal val answer = CompletableFuture<Answer>()
 
         /**
-         * Waits for the core's answer. An interrupt of the waiting thread aborts the load.
+         * Waits for the answer.
          *
-         * @throws InterruptedIOException when the thread is interrupted; its interrupt stays set.
+         * @throws InterruptedIOException when the thread is interrupted; its interrupt stays set,
+         *   and the call has no answer then.
          */
-        fun await(): SegmentResult =
+        fun await(): Answer =
             try {
-                result.get()
+                answer.get()
             } catch (_: InterruptedException) {
-                cancel()
+                calls.remove(id, answer)
                 Thread.currentThread().interrupt()
-                throw InterruptedIOException("The load of a segment was interrupted")
+                throw InterruptedIOException("The wait for the core was interrupted")
             }
-
-        /** Aborts the load, unless it has its answer. Any thread. */
-        fun cancel() {
-            if (loads.remove(id, result)) {
-                result.complete(SegmentResult.Failed("aborted"))
-                port.send("abort", id, emptyList()) {}
-            }
-        }
     }
 }

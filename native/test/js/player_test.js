@@ -1,6 +1,6 @@
 // The player bridge (src/polyfills/player.js), with the real core and the
-// fake clients of engine_test.c: fakePlayer.send posts the player's events as
-// tasks, as the platform does, and fakePlayer.answers records each load's
+// fake clients of engine_test.c: fakePlayer.send posts the platform's events
+// as tasks, as the platform does, and fakePlayer.answers records each call's
 // answer; the core's requests go to the fake HTTP client (fakeHttp).
 
 const BASE = "https://example.com/hls/";
@@ -38,17 +38,17 @@ const inOrder = (body) => {
   return run;
 };
 
-// The answers to load `id`, after the tasks before it have run.
+// The answers to call `id`, after the tasks before it have run.
 const answersOf = (id) => fakePlayer.answers.filter((a) => a.id === id);
 
-// Waits for the first answer to load `id`.
+// Waits for the first answer to call `id`.
 const answerTo = async (id) => {
   for (let i = 0; i < 200; i++) {
     const [answer] = answersOf(id);
     if (answer !== undefined) return answer;
     await tasksRun();
   }
-  throw new Error(`no answer to load ${id}`);
+  throw new Error(`no answer to call ${id}`);
 };
 
 // Waits for a request of `url` by the core that no earlier step used, and
@@ -71,57 +71,87 @@ const CONFIG = JSON.stringify({
   p2pDownloadTimeWindow: 0,
 });
 
-const startCore = () => {
-  fakePlayer.send("start", 0, CONFIG);
+const giveManifests = () => {
   fakePlayer.send("manifest", 0, BASE + "master.m3u8", undefined, MASTER);
   fakePlayer.send("manifest", 0, BASE + "media.m3u8", undefined, MEDIA);
 };
 
-test("a load before start is a miss", () =>
+// The value of query `name` (loadable, config), parsed.
+let lastQuery = 1000;
+const query = async (name, ...texts) => {
+  const id = ++lastQuery;
+  fakePlayer.send(name, id, ...texts);
+  const answer = await answerTo(id);
+  assertEquals(answer.kind, "value", `${name}: the answer`);
+  return JSON.parse(answer.value);
+};
+
+// Answers the core's next request of `url` with `bytes`: 206 for a range.
+const serve = async (url, bytes) => {
+  const request = await requestOf(url);
+  const status = request.headers.range === undefined ? 200 : 206;
+  fakeHttp.respond(request.id, status, "", request.url, []);
+  fakeHttp.data(request.id, bytes);
+  fakeHttp.end(request.id);
+  return request;
+};
+
+test("before start, nothing is loadable and a load fails", () =>
   inOrder(async () => {
+    assertEquals(await query("loadable", BASE + "seg0.m4s"), false, "loadable");
+    assertEquals(await query("config"), null, "config");
     fakePlayer.send("load", 1, BASE + "seg0.m4s");
-    assertEquals((await answerTo(1)).kind, "miss", "the answer");
+    assertEquals((await answerTo(1)).kind, "fail", "load");
   }));
 
 test("the event after start finds the core", () =>
   inOrder(async () => {
     // Each event is a task, as from the platform.
-    startCore();
+    fakePlayer.send("start", 0, CONFIG);
+    giveManifests();
+    assertEquals(await query("loadable", BASE + "seg0.m4s"), true, "loadable");
     fakePlayer.send("load", 2, BASE + "seg0.m4s");
-    const request = await requestOf(BASE + "seg0.m4s");
-    fakeHttp.respond(request.id, 200, "OK", request.url, []);
-    fakeHttp.data(request.id, new Uint8Array([1, 2, 3]));
-    fakeHttp.end(request.id);
+    await serve(BASE + "seg0.m4s", new Uint8Array([1, 2, 3]));
     const answer = await answerTo(2);
     assertEquals(answer.kind, "segment", "the answer");
     assertEquals(hex(answer.data), "01 02 03", "the bytes");
+    assertEquals(typeof answer.bandwidth, "number", "the bandwidth");
     assertEquals(answersOf(2).length, 1, "one answer");
   }));
 
-test("an unknown URL and an init segment are misses", () =>
+test("getConfig gives the given settings and the core's defaults", () =>
   inOrder(async () => {
-    fakePlayer.send("load", 3, BASE + "other.m4s");
-    fakePlayer.send("load", 4, BASE + "init.mp4");
-    assertEquals((await answerTo(3)).kind, "miss", "an unknown URL");
-    assertEquals((await answerTo(4)).kind, "miss", "an init segment");
+    // As the JS core's: the stream settings of each stream type.
+    const { mainStream, secondaryStream } = await query("config");
+    assertEquals(mainStream.httpDownloadTimeWindow, 0, "a given setting");
+    assertEquals(secondaryStream.httpDownloadTimeWindow, 0, "for both");
+    assertEquals(mainStream.httpErrorRetries, 3, "a default");
+  }));
+
+test("an unknown URL and an init segment are not loadable", () =>
+  inOrder(async () => {
+    const other = BASE + "other.m4s";
+    assertEquals(await query("loadable", other), false, "an unknown URL");
+    assertEquals(await query("loadable", BASE + "init.mp4"), false, "init");
+    // As in JS, a load of an unknown URL fails.
+    fakePlayer.send("load", 3, other);
+    assertEquals((await answerTo(3)).kind, "fail", "a load of it");
   }));
 
 test("a byte-range segment is found by its range", () =>
   inOrder(async () => {
-    fakePlayer.send("load", 5, BASE + "range.m4s", "0-500");
-    assertEquals((await answerTo(5)).kind, "miss", "another range");
-    fakePlayer.send("load", 6, BASE + "range.m4s", "0-999");
-    const request = await requestOf(BASE + "range.m4s");
+    const url = BASE + "range.m4s";
+    assertEquals(await query("loadable", url, "0-500"), false, "another range");
+    assertEquals(await query("loadable", url, "0-999"), true, "its range");
+    fakePlayer.send("load", 6, url, "0-999");
+    const request = await serve(url, new Uint8Array(1000));
     assertEquals(request.headers.range, "bytes=0-999", "the request's range");
-    fakeHttp.respond(request.id, 206, "Partial Content", request.url, []);
-    fakeHttp.data(request.id, new Uint8Array(1000));
-    fakeHttp.end(request.id);
     const answer = await answerTo(6);
     assertEquals(answer.kind, "segment", "the answer");
     assertEquals(answer.data.length, 1000, "the length");
   }));
 
-test("a load that fails gets the core's error", () =>
+test("a load that fails gets the core's error type", () =>
   inOrder(async () => {
     fakePlayer.send("load", 7, BASE + "seg2.m4s");
     // The core tries again after a failure: each request fails.
@@ -135,24 +165,24 @@ test("a load that fails gets the core's error", () =>
       await tasksRun();
     }
     const answer = await answerTo(7);
-    assertEquals(answer.kind, "fail", "the answer");
+    assertEquals(`${answer.kind} ${answer.type}`, "fail failed", "the answer");
     assertEquals(answersOf(7).length, 1, "one answer");
   }));
 
-test("abort gives one failure, at once", () =>
+test("abortSegmentLoading fails the load as aborted, once", () =>
   inOrder(async () => {
     fakePlayer.send("load", 8, BASE + "seg3.m4s");
     await requestOf(BASE + "seg3.m4s");
-    fakePlayer.send("abort", 8);
+    fakePlayer.send("abort", 0, BASE + "seg3.m4s");
     const answer = await answerTo(8);
-    assertEquals(`${answer.kind} ${answer.message}`, "fail aborted", "abort");
+    // The core's error has no message: the message is its type.
+    assertEquals(
+      `${answer.kind} ${answer.type} ${answer.message}`,
+      "fail aborted aborted",
+      "abort",
+    );
     await tasksRun();
     assertEquals(answersOf(8).length, 1, "one answer");
-    fakePlayer.send("abort", 8);
-    fakePlayer.send("abort", 99);
-    await tasksRun();
-    assertEquals(answersOf(8).length, 1, "an abort after the answer");
-    assertEquals(answersOf(99).length, 0, "an abort of no load");
   }));
 
 // Runs `body` with Core.prototype[name] replaced by `replacement`.
@@ -167,7 +197,7 @@ const withCoreMethod = async (name, replacement, body) => {
   }
 };
 
-test("a failure gives the type of the core's error", () =>
+test("a failure gives the type and the message of the core's error", () =>
   inOrder(async () => {
     const { CoreRequestError } = await import("p2p-media-loader-core");
     await withCoreMethod(
@@ -176,7 +206,11 @@ test("a failure gives the type of the core's error", () =>
       async () => {
         fakePlayer.send("load", 20, BASE + "seg0.m4s");
         const answer = await answerTo(20);
-        assertEquals(`${answer.kind} ${answer.message}`, "fail failed", "type");
+        assertEquals(
+          `${answer.kind} ${answer.type} ${answer.message}`,
+          "fail failed a detail",
+          "the error",
+        );
       },
     );
   }));
@@ -186,7 +220,7 @@ test("an answer that cannot be sent becomes a failure", () =>
     // A Uint8Array of a negative length throws.
     await withCoreMethod(
       "loadSegment",
-      () => Promise.resolve({ data: -1 }),
+      () => Promise.resolve({ data: -1, bandwidth: 0 }),
       async () => {
         fakePlayer.send("load", 21, BASE + "seg0.m4s");
         assertEquals((await answerTo(21)).kind, "fail", "the answer");
@@ -221,20 +255,18 @@ test("a debug line has its values in place", () =>
     );
   }));
 
-test("stop fails the open loads, and a later load is a miss", () =>
+test("destroy aborts the open loads, and the core takes a new source", () =>
   inOrder(async () => {
     // Not seg0, which the core keeps in its storage. The core may wait for
     // the request that the abort left: no new one starts.
     fakePlayer.send("load", 10, BASE + "seg3.m4s");
     await tasksRun();
     assertEquals(answersOf(10).length, 0, "an open load");
-    fakePlayer.send("stop", 0);
+    fakePlayer.send("destroy", 0);
     const answer = await answerTo(10);
-    assertEquals(`${answer.kind} ${answer.message}`, "fail stopped", "stop");
-    fakePlayer.send("load", 11, BASE + "seg0.m4s");
-    assertEquals((await answerTo(11)).kind, "miss", "after stop");
-    // The core can start again.
-    startCore();
-    fakePlayer.send("load", 12, BASE + "init.mp4");
-    assertEquals((await answerTo(12)).kind, "miss", "an init segment again");
+    assertEquals(`${answer.kind} ${answer.type}`, "fail aborted", "destroy");
+    const segment = BASE + "seg0.m4s";
+    assertEquals(await query("loadable", segment), false, "no source");
+    giveManifests();
+    assertEquals(await query("loadable", segment), true, "a new source");
   }));

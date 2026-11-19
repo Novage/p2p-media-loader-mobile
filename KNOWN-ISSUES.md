@@ -43,8 +43,16 @@ that describes the behaviour, not here.
   other x86 code runs the ARM library through translation where the system
   has it, and else does not install. An app that has other x86 code installs
   as x86: its first `JsEngine` throws `UnsatisfiedLinkError`, and each later
-  one `NoClassDefFoundError`.
-  The public API, still to be designed, must then play without P2P.
+  one `NoClassDefFoundError`. `Core` then has no core: the player loads every
+  request itself and plays without P2P (specs/api.md).
+- **The API is not complete.** `Core` does not have these calls of the JS
+  core: the events (`addEventListener`, `removeEventListener`),
+  `applyDynamicConfig`, `updatePlayback`, `setManifestResponseUrl`,
+  `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
+  (`isSegmentIndex`, `processSegmentIndex`). There is no player engine
+  (`Media3P2PEngine`) yet (specs/api.md). With no
+  playback state, the core sees an empty buffer: every request is urgent and
+  goes over HTTP, so a player gets no segment from peers.
 - **A Gradle deprecation does not fail the build.** Two plugins call
   `Configuration.setVisible`, which Gradle 9.9 deprecates: detekt
   2.0.0-alpha.6 (`DetektBasePlugin`, `DetektPlugin`) and Spotless 8.9.0

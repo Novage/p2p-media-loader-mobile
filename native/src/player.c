@@ -55,8 +55,8 @@ static JSValue player_listen(JSContext *context, JSValueConst this_value, int ar
   return JS_UNDEFINED;
 }
 
-// playerMiss(id), playerData(id, Uint8Array) and playerFail(id, message):
-// the answer to load `id`.
+// playerValue(id, json), playerData(id, Uint8Array, bandwidth) and
+// playerFail(id, type, message): the answer to call `id`.
 static JSValue player_answer(JSContext *context, JSValueConst this_value, int argc,
                              JSValueConst *argv, int kind) {
   (void)this_value;
@@ -66,11 +66,13 @@ static JSValue player_answer(JSContext *context, JSValueConst this_value, int ar
   if (JS_ToInt32(context, &id, argv[0]) < 0) {
     return JS_EXCEPTION;
   }
-  if (kind == 0) {
-    client->miss(client->data, id);
-  } else if (kind == 1) {
+  if (kind == 1) {
+    double bandwidth = 0;
     size_t offset = 0;
     size_t length = 0;
+    if (JS_ToFloat64(context, &bandwidth, argv[2]) < 0) {
+      return JS_EXCEPTION;
+    }
     JSValue buffer = JS_GetTypedArrayBuffer(context, argv[1], &offset, &length, NULL);
     if (JS_IsException(buffer)) {
       return buffer;
@@ -81,24 +83,37 @@ static JSValue player_answer(JSContext *context, JSValueConst this_value, int ar
     if (bytes == NULL) {
       return JS_EXCEPTION;
     }
-    client->segment(client->data, id, bytes + offset, length);
-  } else {
-    size_t length = 0;
-    const char *message = JS_ToCStringLen(context, &length, argv[1]);
-    if (message == NULL) {
-      return JS_EXCEPTION;
-    }
-    client->fail(client->data, id, (const uint8_t *)message, length);
-    JS_FreeCString(context, message);
+    client->segment(client->data, id, bytes + offset, length, bandwidth);
+    return JS_UNDEFINED;
   }
+  size_t length = 0;
+  const char *text = JS_ToCStringLen(context, &length, argv[1]);
+  if (text == NULL) {
+    return JS_EXCEPTION;
+  }
+  if (kind == 0) {
+    client->value(client->data, id, (const uint8_t *)text, length);
+    JS_FreeCString(context, text);
+    return JS_UNDEFINED;
+  }
+  size_t message_length = 0;
+  const char *message = JS_ToCStringLen(context, &message_length, argv[2]);
+  if (message == NULL) {
+    JS_FreeCString(context, text);
+    return JS_EXCEPTION;
+  }
+  client->fail(client->data, id, (const uint8_t *)text, length, (const uint8_t *)message,
+               message_length);
+  JS_FreeCString(context, message);
+  JS_FreeCString(context, text);
   return JS_UNDEFINED;
 }
 
 static const JSCFunctionListEntry player_functions[] = {
     JS_CFUNC_DEF("playerListen", 1, player_listen),
-    JS_CFUNC_MAGIC_DEF("playerMiss", 1, player_answer, 0),
-    JS_CFUNC_MAGIC_DEF("playerData", 2, player_answer, 1),
-    JS_CFUNC_MAGIC_DEF("playerFail", 2, player_answer, 2),
+    JS_CFUNC_MAGIC_DEF("playerValue", 2, player_answer, 0),
+    JS_CFUNC_MAGIC_DEF("playerData", 3, player_answer, 1),
+    JS_CFUNC_MAGIC_DEF("playerFail", 3, player_answer, 2),
 };
 
 bool p2pml_player_add(JSContext *context, JSValueConst natives) {

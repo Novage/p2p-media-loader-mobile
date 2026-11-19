@@ -22,6 +22,7 @@ the rules for the code that calls it.
 | WebRTC: the peers, over libdatachannel   | `native/src/rtc.h`, `native/src/rtc.c`, `native/src/polyfills/webrtc.js`                |
 | The player bridge: the core of a player  | `native/src/player.h`, `native/src/player.c`, `native/src/polyfills/player.js`          |
 | The player bridge for Kotlin             | `library/src/androidMain/…/player/CoreSession.kt`                                       |
+| The public Core and its settings         | `library/src/androidMain/…/Core.kt`, `CoreConfig.kt` (see [api.md](api.md))             |
 | The JNI glue, nothing else               | `native/src/jni.c`                                                                      |
 | The engine for Kotlin                    | `library/src/androidMain/…/engine/JsEngine.kt`                                          |
 
@@ -385,62 +386,57 @@ Mbed TLS (DTLS). Its own log is off.
 
 ## The player bridge
 
-The library's player integration does what a web player's adapter does
-(the web repository's `specs/player-adapters.md`): it gives the core every
-manifest, loads the segments through it, loads every other request itself,
-and reports the playback state. The playback state is not in the bridge yet:
-step 2.6 adds it. Until then the core sees an empty buffer, so every request
-is urgent and goes over HTTP. The bridge is how the integration reaches the
-core in the engine. It is not a
-browser API: `native/src/polyfills/player.js` is the glue around the core,
-installed as the polyfills are, and `native/src/player.c` gives it its
-natives.
+The library's public `Core` (see [api.md](api.md)) has the JS core's calls;
+the bridge is how they reach the core in the engine. It is not a browser API:
+`native/src/polyfills/player.js` is the glue around the core, installed as
+the polyfills are, and `native/src/player.c` gives it its natives. A player
+integration does what a web player's adapter does (the web repository's
+`specs/player-adapters.md`): it gives the core every manifest, loads the
+segments through it, loads every other request itself, and reports the
+playback state (KNOWN-ISSUES.md: the bridge has no playback state).
 
 - **The events,** from Kotlin to JS: `CoreSession` (Kotlin, any thread)
   posts each one as a task, and on the engine thread `playerEvent` (JNI)
   gives it to the glue's listener as `(id, name, ...texts)`, as a channel
-  does (`p2pml_listener_call`):
-  - `start(config)` imports the core and makes it, with the JSON object
-    `config` as its settings and the HLS parser. QuickJS loads the module in
-    the Promise jobs of this event's task, which run before the next task:
-    the next event finds the core.
-  - `manifest(url, requestedUrl, text)` gives the core a manifest, with the
-    URL after redirects and the one asked for, as the HLS.js adapter does.
+  does (`p2pml_listener_call`). A range is `"start-end"`, inclusive, or
+  none.
+  - `start(config)` imports the core and makes it, once, with the JSON
+    object `config` as its settings and the HLS parser. QuickJS loads the
+    module in the Promise jobs of this event's task, which run before the
+    next task: the next event finds the core.
+  - `manifest(url, requestedUrl, data)` is `processManifest`, with the URL
+    after redirects and the one asked for, as the HLS.js adapter gives them.
     The core ignores a manifest that it cannot parse (only its debug log
     shows it), which costs P2P only; an exception from `processManifest` is
     reported.
-  - `load(id, url, range)` loads a segment: `range` is `"start-end"`,
-    inclusive, or none.
-  - `abort(id)` stops a load; `stop()` destroys the core, and `start` can
-    make it again. A second `start` needs a `stop` before it: else it is
-    reported, and the core keeps its settings.
-- **The answers,** from JS to Kotlin: each load gets one, through the
-  natives `playerMiss`, `playerData` and `playerFail` and the client of
-  `p2pml_engine_run` (`PlayerSink` in Kotlin):
-  - a miss when the core does not load the segment
-    (`isSegmentLoadable` is false: an unknown URL, an init segment, a
-    range that the manifest does not give, P2P off), and when there is no
-    core: before `start`, after `stop`. The player then loads the segment
-    itself, as a web player does after a registry miss;
-  - the whole segment, copied once from its `ArrayBuffer` into a Kotlin
-    `ByteArray`: `loadSegment` gives the segment at its end, not in parts;
-  - a failure with the core's error type (`"failed"`), or `"aborted"`
-    after an abort, `"stopped"` after a stop. The player can try again, as
-    a web player retries a fragment. The core keeps one load for each
-    stream type (main, secondary): a new load of the same type aborts the
-    open one, which fails with `"aborted"`. So the integration loads one
+  - `loadable(id, url, range)` and `config(id)` are `isSegmentLoadable` and
+    `getConfig`: queries, answered at once.
+  - `load(id, url, range)` is `loadSegment`: as in JS, a URL that the core
+    does not know fails.
+  - `abort(url, range)` is `abortSegmentLoading`; `destroy()` is `destroy`,
+    which, as in JS, readies the core for the next source.
+- **The answers,** from JS to Kotlin, one for each query and each load,
+  through the natives and the client of `p2pml_engine_run` (`PlayerSink` in
+  Kotlin):
+  - `playerValue(id, json)`: a query's value; with no core, `false` and
+    `null`;
+  - `playerData(id, bytes, bandwidth)`: the whole segment, copied once from
+    its `ArrayBuffer` into a Kotlin `ByteArray` (`loadSegment` gives the
+    segment at its end, not in parts), and the bandwidth the core measured;
+  - `playerFail(id, type, message)`: the core's error type (`"failed"`,
+    `"aborted"`) and its message. `destroy` fails the open loads as
+    `"aborted"` before it calls the core's `destroy()`, which can throw. The
+    core keeps one load for each stream type (main, secondary): a new load
+    of the same type aborts the open one. So the integration loads one
     segment at a time for each type, as HLS.js does.
 - **When JS does not take an event** (an exception, out of memory), the
-  listener's error is reported, and a load becomes a miss at once.
+  listener's error is reported, and the call fails at once: a query gives no
+  value, a load fails.
 - **The close:** an engine that closes answers nothing more. `JsEngine`
-  completes every open load as a miss when its thread ends, and a load that
-  comes after the close is a miss at once: a player never waits for an
-  engine that has gone.
-- **A wait** blocks the player's loading thread, not the engine's; an
-  interrupt of that thread aborts the load (`InterruptedIOException`).
-- **The core's settings** are the web core's `CoreConfig`, as JSON. Note
-  that `httpErrorRetries: 0` makes the core load nothing over HTTP (it
-  counts all the tries, not the retries after the first).
+  fails every open call when its thread ends, and a call that comes after
+  the close fails at once: no caller waits for an engine that has gone.
+- **A wait** blocks the caller's thread, not the engine's; an interrupt of
+  that thread ends the wait (`InterruptedIOException`).
 
 ## Modules
 

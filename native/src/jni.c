@@ -24,7 +24,7 @@ static jmethodID ws_sink_open;
 static jmethodID ws_sink_send;
 static jmethodID ws_sink_close;
 static jmethodID ws_sink_cancel;
-static jmethodID player_sink_miss;
+static jmethodID player_sink_value;
 static jmethodID player_sink_segment;
 static jmethodID player_sink_fail;
 
@@ -97,10 +97,10 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   if (player_sink == NULL) {
     return JNI_ERR;
   }
-  player_sink_miss = (*env)->GetMethodID(env, player_sink, "miss", "(I)V");
-  player_sink_segment = (*env)->GetMethodID(env, player_sink, "segment", "(I[B)V");
-  player_sink_fail = (*env)->GetMethodID(env, player_sink, "fail", "(I[B)V");
-  if (player_sink_miss == NULL || player_sink_segment == NULL || player_sink_fail == NULL) {
+  player_sink_value = (*env)->GetMethodID(env, player_sink, "value", "(I[B)V");
+  player_sink_segment = (*env)->GetMethodID(env, player_sink, "segment", "(I[BD)V");
+  player_sink_fail = (*env)->GetMethodID(env, player_sink, "fail", "(I[B[B)V");
+  if (player_sink_value == NULL || player_sink_segment == NULL || player_sink_fail == NULL) {
     return JNI_ERR;
   }
   return JNI_VERSION_1_6;
@@ -318,8 +318,6 @@ static void ws_close(void *data, int32_t id, int code, const uint8_t *reason,
 
 static void ws_cancel(void *data, int32_t id) { call_with_id(data, ws_sink_cancel, id); }
 
-static void player_miss(void *data, int32_t id) { call_with_id(data, player_sink_miss, id); }
-
 // Calls `method`, a method (I[B)V of the sink, for item `id`, with a copy of
 // the bytes.
 static void call_with_bytes(engine_sink *sink, jmethodID method, int32_t id, const uint8_t *bytes,
@@ -336,13 +334,42 @@ static void call_with_bytes(engine_sink *sink, jmethodID method, int32_t id, con
   close_on_exception(env, sink->engine);
 }
 
-static void player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length) {
-  call_with_bytes(data, player_sink_segment, id, bytes, length);
+// Texts cross as UTF-8 bytes, as ws_send's text.
+static void player_value(void *data, int32_t id, const uint8_t *json, size_t length) {
+  call_with_bytes(data, player_sink_value, id, json, length);
 }
 
-// The message crosses as UTF-8 bytes, as ws_send's text.
-static void player_fail(void *data, int32_t id, const uint8_t *message, size_t length) {
-  call_with_bytes(data, player_sink_fail, id, message, length);
+static void player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length,
+                           double bandwidth) {
+  engine_sink *player = data;
+  JNIEnv *env = player->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  jbyteArray array = byte_array_of(env, bytes, length);
+  if (array != NULL) {
+    (*env)->CallVoidMethod(env, player->sink, player_sink_segment, (jint)id, array,
+                           (jdouble)bandwidth);
+  }
+  (*env)->DeleteLocalRef(env, array);
+  close_on_exception(env, player->engine);
+}
+
+static void player_fail(void *data, int32_t id, const uint8_t *type, size_t type_length,
+                        const uint8_t *message, size_t message_length) {
+  engine_sink *player = data;
+  JNIEnv *env = player->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  jbyteArray types = byte_array_of(env, type, type_length);
+  jbyteArray messages = types != NULL ? byte_array_of(env, message, message_length) : NULL;
+  if (messages != NULL) {
+    (*env)->CallVoidMethod(env, player->sink, player_sink_fail, (jint)id, types, messages);
+  }
+  (*env)->DeleteLocalRef(env, messages);
+  (*env)->DeleteLocalRef(env, types);
+  close_on_exception(env, player->engine);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv *env, jclass type,
@@ -359,7 +386,7 @@ JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv 
   p2pml_ws_client ws_client = {
       .open = ws_open, .send = ws_send, .close = ws_close, .cancel = ws_cancel, .data = &ws};
   p2pml_player_client player_client = {
-      .miss = player_miss, .segment = player_segment, .fail = player_fail, .data = &player};
+      .value = player_value, .segment = player_segment, .fail = player_fail, .data = &player};
   return p2pml_engine_run(log.engine, write_log, &log, &http_client, &ws_client, &player_client);
 }
 
@@ -590,10 +617,10 @@ JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_wsClose(
   return posted;
 }
 
-// Engine thread, in a task: gives event `name` (ASCII) of load `id` to the
-// player bridge, with its texts, UTF-8 bytes or null for none. False when JS
-// did not take it, also with too many texts, and with an OutOfMemoryError when
-// a copy fails.
+// Engine thread, in a task: gives event `name` (ASCII) of call `id` (a query or
+// a load; 0 for an event with no answer) to the player bridge, with its texts,
+// UTF-8 bytes or null for none. False when JS did not take it, also with too
+// many texts, and with an OutOfMemoryError when a copy fails.
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_playerEvent(
     JNIEnv *env, jclass type, jlong handle, jstring name, jint id, jobjectArray texts) {
   (void)type;
