@@ -3,6 +3,7 @@
 #include "encoding.h"
 #include "http.h"
 #include "modules.h"
+#include "player.h"
 #include "polyfills.h"
 #include "rtc.h"
 #include "url.h"
@@ -77,6 +78,8 @@ struct p2pml_engine {
   p2pml_ws *ws;
   // The peer connections of RTCPeerConnection: as `http`.
   p2pml_rtc *rtc;
+  // The player bridge: as `http`.
+  p2pml_player *player;
   // The channels of `http`, `ws` and `rtc`, borrowed: as they are.
   p2pml_channel *channels[P2PML_CHANNEL_COUNT];
   // navigator.userAgent, UTF-8.
@@ -544,7 +547,7 @@ static bool add_polyfills(p2pml_engine *engine) {
                                           COUNT(native_functions)) == 0 &&
                p2pml_add_encoding(context, natives) && p2pml_add_url(context, natives) &&
                p2pml_http_add(context, natives) && p2pml_ws_add(context, natives) &&
-               p2pml_rtc_add(context, natives);
+               p2pml_rtc_add(context, natives) && p2pml_player_add(context, natives);
   for (int i = 0; added && i < p2pml_polyfills_count; i++) {
     const p2pml_script *script = &p2pml_polyfills[i];
     const char *source = (const char *)script->source;
@@ -608,14 +611,17 @@ static int interrupt_if_closed(JSRuntime *runtime, void *opaque) {
 }
 
 bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data,
-                      const p2pml_http_client *http, const p2pml_ws_client *ws) {
+                      const p2pml_http_client *http, const p2pml_ws_client *ws,
+                      const p2pml_player_client *player) {
   engine->log = log;
   engine->log_data = log_data;
   engine->started = now();
   engine->http = p2pml_http_new(http);
   engine->ws = p2pml_ws_new(ws);
   engine->rtc = p2pml_rtc_new(engine);
-  bool clients = engine->http != NULL && engine->ws != NULL && engine->rtc != NULL;
+  engine->player = p2pml_player_new(player);
+  bool clients =
+      engine->http != NULL && engine->ws != NULL && engine->rtc != NULL && engine->player != NULL;
   if (clients) {
     engine->channels[P2PML_CHANNEL_HTTP] = p2pml_http_channel(engine->http);
     engine->channels[P2PML_CHANNEL_WS] = p2pml_ws_channel(engine->ws);
@@ -664,6 +670,8 @@ bool p2pml_engine_run(p2pml_engine *engine, p2pml_log_write *log, void *log_data
   // this engine after it, so the engine can be freed.
   p2pml_rtc_free(engine->rtc, engine->context);
   engine->rtc = NULL;
+  p2pml_player_free(engine->player, engine->context);
+  engine->player = NULL;
   engine->channels[P2PML_CHANNEL_HTTP] = NULL;
   engine->channels[P2PML_CHANNEL_WS] = NULL;
   engine->channels[P2PML_CHANNEL_RTC] = NULL;
@@ -723,6 +731,8 @@ p2pml_http *p2pml_engine_http(p2pml_engine *engine) { return engine->http; }
 p2pml_ws *p2pml_engine_ws(p2pml_engine *engine) { return engine->ws; }
 
 p2pml_rtc *p2pml_engine_rtc(p2pml_engine *engine) { return engine->rtc; }
+
+p2pml_player *p2pml_engine_player(p2pml_engine *engine) { return engine->player; }
 
 p2pml_channel *p2pml_engine_channel(p2pml_engine *engine, p2pml_channel_id which) {
   return engine->channels[which];

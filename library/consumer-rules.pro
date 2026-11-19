@@ -25,3 +25,8 @@
     void close(int, int, byte[]);
     void cancel(int);
 }
+-keep interface com.novage.p2pml.engine.NativeEngine$PlayerSink {
+    void miss(int);
+    void segment(int, byte[]);
+    void fail(int, byte[]);
+}

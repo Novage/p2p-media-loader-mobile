@@ -242,14 +242,15 @@ static JSValue value_of(JSContext *context, p2pml_arg *arg) {
     JS_FreeValue(context, buffer);
     return array;
   }
+  case P2PML_ARG_UNDEFINED:
+    return JS_UNDEFINED;
   }
   return JS_UNDEFINED;
 }
 
-// Gives the event to the listener; `listener` stays the caller's. False, after
-// its report, when JS throws, also when out of memory.
-static bool give_to_js(p2pml_engine *engine, JSContext *context, JSValueConst listener, int32_t id,
-                       const char *name, size_t arg_count, p2pml_arg *args) {
+bool p2pml_listener_call(p2pml_engine *engine, JSValueConst listener, int32_t id, const char *name,
+                         size_t arg_count, p2pml_arg *args) {
+  JSContext *context = p2pml_engine_context(engine);
   JSValue arguments[2 + P2PML_CHANNEL_MAX_ARGS];
   size_t count = 2 + arg_count;
   arguments[0] = JS_NewInt32(context, id);
@@ -259,13 +260,16 @@ static bool give_to_js(p2pml_engine *engine, JSContext *context, JSValueConst li
     arguments[2 + i] = made ? value_of(context, &args[i]) : JS_UNDEFINED;
     made = made && !JS_IsException(arguments[2 + i]);
   }
+  // A copy: the listener can replace itself while it runs.
+  JSValue function = JS_DupValue(context, listener);
   JSValue result =
-      made ? JS_Call(context, listener, JS_UNDEFINED, (int)count, arguments) : JS_EXCEPTION;
+      made ? JS_Call(context, function, JS_UNDEFINED, (int)count, arguments) : JS_EXCEPTION;
   bool given = !JS_IsException(result);
   if (!given) {
     p2pml_engine_report_exception(engine);
   }
   JS_FreeValue(context, result);
+  JS_FreeValue(context, function);
   for (size_t i = 0; i < count; i++) {
     JS_FreeValue(context, arguments[i]);
   }
@@ -284,15 +288,15 @@ static void run_event(p2pml_engine *engine, void *data) {
   JSContext *context = p2pml_engine_context(engine);
   // A needed event that JS did not take fails its item (see the rules).
   if (open && JS_IsFunction(context, channel->listener) &&
-      !give_to_js(engine, context, channel->listener, happened->id, happened->name,
-                  happened->arg_count, happened->args) &&
+      !p2pml_listener_call(engine, channel->listener, happened->id, happened->name,
+                           happened->arg_count, happened->args) &&
       named(rules->needed, happened->name) && p2pml_channel_cancel(channel, happened->id)) {
     // A copy, because value_of takes a changeable argument and the rules are
     // const; on the stack, because this path runs also when out of memory.
     p2pml_arg failure_args[P2PML_CHANNEL_MAX_ARGS];
     memcpy(failure_args, rules->failure_args, rules->failure_arg_count * sizeof failure_args[0]);
-    give_to_js(engine, context, channel->listener, happened->id, rules->failure,
-               rules->failure_arg_count, failure_args);
+    p2pml_listener_call(engine, channel->listener, happened->id, rules->failure,
+                        rules->failure_arg_count, failure_args);
   }
   free_event(happened);
 }

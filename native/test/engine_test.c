@@ -11,6 +11,7 @@
 
 #include "engine.h"
 #include "http.h"
+#include "player.h"
 #include "polyfills.h"
 #include "websocket.h"
 
@@ -151,6 +152,36 @@ static void fake_ws_cancel(void *data, int32_t id) {
           JS_NewInt32(p2pml_engine_context(data), id));
 }
 
+// The fake player client of every test engine: fakePlayer.answers records
+// each answer to a load as {id, kind}, with `data` (a Uint8Array) for
+// "segment" and `message` for "fail". push_answer takes `value`, the member
+// `key` of the answer; with no key, `value` must be JS_UNDEFINED.
+static void push_answer(JSContext *context, int32_t id, const char *kind, const char *key,
+                        JSValue value) {
+  JSValue answer = JS_NewObject(context);
+  CHECK(JS_SetPropertyStr(context, answer, "id", JS_NewInt32(context, id)) >= 0);
+  CHECK(JS_SetPropertyStr(context, answer, "kind", JS_NewString(context, kind)) >= 0);
+  if (key != NULL) {
+    CHECK(JS_SetPropertyStr(context, answer, key, value) >= 0);
+  }
+  push_to(context, "fakePlayer", "answers", answer);
+}
+
+static void fake_player_miss(void *data, int32_t id) {
+  push_answer(p2pml_engine_context(data), id, "miss", NULL, JS_UNDEFINED);
+}
+
+static void fake_player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length) {
+  JSContext *context = p2pml_engine_context(data);
+  push_answer(context, id, "segment", "data", bytes_value(context, bytes, length));
+}
+
+static void fake_player_fail(void *data, int32_t id, const uint8_t *message, size_t length) {
+  JSContext *context = p2pml_engine_context(data);
+  push_answer(context, id, "fail", "message",
+              JS_NewStringLen(context, (const char *)message, length));
+}
+
 static void fake_start(void *data, int32_t id, const char *method, const char *url,
                        size_t header_count, const char *const *headers) {
   JSContext *context = p2pml_engine_context(data);
@@ -181,8 +212,12 @@ static void *run_engine(void *data) {
                              .close = fake_ws_close,
                              .cancel = fake_ws_cancel,
                              .data = args->engine};
+  p2pml_player_client fake_player = {.miss = fake_player_miss,
+                                     .segment = fake_player_segment,
+                                     .fail = fake_player_fail,
+                                     .data = args->engine};
   CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log,
-                         &fake, &fake_ws));
+                         &fake, &fake_ws, &fake_player));
   free(args);
   return NULL;
 }
@@ -525,6 +560,66 @@ static JSValue fake_ws_event(JSContext *context, JSValueConst this_value, int ar
   return JS_NewBool(context, posted);
 }
 
+// An event of the fake player, copied for its task.
+typedef struct {
+  char *name;
+  int32_t id;
+  size_t count;
+  // Strings that the event owns, or undefined.
+  p2pml_arg texts[P2PML_CHANNEL_MAX_ARGS];
+} player_event;
+
+static void free_player_event(void *data) {
+  player_event *event = data;
+  free(event->name);
+  for (size_t i = 0; i < event->count; i++) {
+    free((void *)event->texts[i].pointer);
+  }
+  free(event);
+}
+
+// The task of an event: gives it to the bridge, as the platform's task does;
+// one that JS did not take is recorded as an answer {id, kind: "notTaken"}.
+static void run_player_event(p2pml_engine *engine, void *data) {
+  player_event *event = data;
+  if (!p2pml_player_event(engine, event->name, event->id, event->count, event->texts)) {
+    push_answer(p2pml_engine_context(engine), event->id, "notTaken", NULL, JS_UNDEFINED);
+  }
+  free_player_event(event);
+}
+
+// fakePlayer.send(name, id, ...texts): posts a player event as a task, as the
+// platform does from its threads; a text is a string or undefined.
+static JSValue fake_player_send(JSContext *context, JSValueConst this_value, int argc,
+                                JSValueConst *argv) {
+  (void)this_value;
+  CHECK(argc >= 2 && argc - 2 <= P2PML_CHANNEL_MAX_ARGS);
+  player_event *event = calloc(1, sizeof *event);
+  CHECK(event != NULL);
+  const char *name = JS_ToCString(context, argv[0]);
+  CHECK(name != NULL && JS_ToInt32(context, &event->id, argv[1]) == 0);
+  event->name = strdup(name);
+  JS_FreeCString(context, name);
+  event->count = (size_t)argc - 2;
+  for (size_t i = 0; i < event->count; i++) {
+    event->texts[i] = (p2pml_arg){.type = P2PML_ARG_UNDEFINED};
+    if (JS_IsUndefined(argv[2 + i])) {
+      continue;
+    }
+    size_t length = 0;
+    const char *text = JS_ToCStringLen(context, &length, argv[2 + i]);
+    CHECK(text != NULL);
+    char *copy = malloc(length + 1);
+    CHECK(copy != NULL);
+    memcpy(copy, text, length + 1);
+    JS_FreeCString(context, text);
+    event->texts[i] = (p2pml_arg){.type = P2PML_ARG_STRING, .pointer = copy, .length = length};
+  }
+  CHECK(
+      p2pml_engine_post(JS_GetContextOpaque(context), run_player_event, free_player_event, event));
+  return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry fake_ws_functions[] = {
     JS_CFUNC_MAGIC_DEF("open", 3, fake_ws_event, 0),
     JS_CFUNC_MAGIC_DEF("message", 2, fake_ws_event, 1),
@@ -539,7 +634,8 @@ static const JSCFunctionListEntry fake_http_functions[] = {
 };
 
 // Gives the script a global mark() that sets `marked`, closeEngine(),
-// runGc(), and fakeHttp and fakeWs, the fake clients' records and events.
+// runGc(), and fakeHttp, fakeWs and fakePlayer, the fake clients' records and
+// events.
 static void add_test_globals(p2pml_engine *engine, void *data) {
   (void)data;
   engine_to_close = engine;
@@ -563,6 +659,11 @@ static void add_test_globals(p2pml_engine *engine, void *data) {
   JS_SetPropertyStr(context, fake_ws, "closed", JS_NewArray(context));
   JS_SetPropertyStr(context, fake_ws, "cancelled", JS_NewArray(context));
   JS_SetPropertyStr(context, global, "fakeWs", fake_ws);
+  JSValue fake_player = JS_NewObject(context);
+  JS_SetPropertyStr(context, fake_player, "send",
+                    JS_NewCFunction(context, fake_player_send, "send", 2));
+  JS_SetPropertyStr(context, fake_player, "answers", JS_NewArray(context));
+  JS_SetPropertyStr(context, global, "fakePlayer", fake_player);
   JS_FreeValue(context, global);
 }
 
@@ -1148,6 +1249,88 @@ static void test_a_message_that_js_cannot_take_fails_the_peer(void) {
   free_log(&log);
 }
 
+// A player event that JS does not take is reported, and the platform learns
+// it: for a load, the player then loads the segment itself.
+static void test_a_player_event_that_js_does_not_take(void) {
+  captured_log log = {0};
+  run_script("fakePlayer.send('unknown', 5);"
+             "setTimeout(() => {"
+             "  console.log(fakePlayer.answers.map((a) => a.id + ' ' + a.kind).join());"
+             "  closeEngine();"
+             "}, 50);",
+             &log);
+  CHECK(log.count == 2);
+  check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught TypeError", false);
+  check_line(&log, 1, P2PML_LOG_INFO, "5 notTaken", true);
+  free_log(&log);
+}
+
+// The close frees the core and its open load with the runtime: no JS and no
+// answer of the fake client runs on the freed runtime, and nothing leaks
+// (ASan).
+static void test_the_close_with_a_load_open(void) {
+  run_script("const base = 'https://example.com/hls/';"
+             "fakePlayer.send('start', 0, '{}');"
+             "fakePlayer.send('manifest', 0, base + 'media.m3u8', undefined,"
+             "  '#EXTM3U\\n#EXT-X-TARGETDURATION:4\\n#EXTINF:4,\\ns.ts\\n#EXT-X-ENDLIST\\n');"
+             "fakePlayer.send('load', 1, base + 's.ts');"
+             "let tries = 0;"
+             "const wait = () => {"
+             "  if (++tries > 200) console.error('no request of s.ts');"
+             "  if (tries > 200 || fakeHttp.started.some((r) => r.url === base + 's.ts')) {"
+             "    closeEngine();"
+             "  } else {"
+             "    setTimeout(wait, 10);"
+             "  }"
+             "};"
+             "wait();",
+             NULL);
+  nanosleep(&(struct timespec){.tv_nsec = 100L * 1000 * 1000}, NULL);
+}
+
+// stop() fails the open loads also when the core's destroy() throws: the
+// error is reported, and no load waits for good.
+static void test_stop_answers_when_destroy_throws(void) {
+  captured_log log = {0};
+  run_script("const base = 'https://example.com/hls/';"
+             "import('p2p-media-loader-core').then(({ Core }) => {"
+             "  const destroy = Core.prototype.destroy;"
+             "  Core.prototype.destroy = function () {"
+             "    destroy.call(this);"
+             "    throw new Error('destroy failed');"
+             "  };"
+             "  fakePlayer.send('start', 0, '{}');"
+             "  fakePlayer.send('manifest', 0, base + 'media.m3u8', undefined,"
+             "    '#EXTM3U\\n#EXT-X-TARGETDURATION:4\\n#EXTINF:4,\\ns.ts\\n#EXT-X-ENDLIST\\n');"
+             "  fakePlayer.send('load', 1, base + 's.ts');"
+             "  let tries = 0;"
+             "  const wait = () => {"
+             "    if (!fakeHttp.started.some((r) => r.url === base + 's.ts')) {"
+             "      if (++tries > 200) {"
+             "        console.error('no request of s.ts');"
+             "        closeEngine();"
+             "        return;"
+             "      }"
+             "      setTimeout(wait, 10);"
+             "      return;"
+             "    }"
+             "    fakePlayer.send('stop', 0);"
+             "    setTimeout(() => {"
+             "      Core.prototype.destroy = destroy;"
+             "      const answers = fakePlayer.answers.filter((a) => a.id === 1);"
+             "      console.log(answers.map((a) => a.kind + ' ' + a.message).join());"
+             "      closeEngine();"
+             "    }, 50);"
+             "  };"
+             "  wait();"
+             "});",
+             &log);
+  CHECK(log.count == 2);
+  check_line(&log, 0, P2PML_LOG_ERROR, "Uncaught Error: destroy failed", false);
+  check_line(&log, 1, P2PML_LOG_INFO, "fail stopped", true);
+  free_log(&log);
+}
+
 // An event after the close is not taken, and its copy is freed (ASan).
 static void test_an_event_after_the_close_is_freed(void) {
   p2pml_engine *engine = p2pml_engine_new(USER_AGENT);
@@ -1244,6 +1427,9 @@ int main(void) {
   test_the_close_deletes_open_peer_connections();
   test_a_message_that_js_cannot_take_fails_the_peer();
   test_an_event_that_js_cannot_take_fails_the_request();
+  test_a_player_event_that_js_does_not_take();
+  test_the_close_with_a_load_open();
+  test_stop_answers_when_destroy_throws();
   test_js_files();
   puts("engine tests passed");
   return 0;

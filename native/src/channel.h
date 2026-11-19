@@ -37,6 +37,8 @@ typedef enum {
   P2PML_ARG_STRINGS,
   // `length` bytes at `pointer`, as a Uint8Array.
   P2PML_ARG_BYTES,
+  // None: JS gets undefined.
+  P2PML_ARG_UNDEFINED,
 } p2pml_arg_type;
 
 // An argument of an event. The pointers stay the caller's: posting copies.
@@ -94,6 +96,14 @@ int32_t p2pml_channel_add(p2pml_channel *channel);
 bool p2pml_channel_cancel(p2pml_channel *channel, int32_t id);
 // The function that gets every event; `listener` stays the caller's.
 void p2pml_channel_listen(p2pml_channel *channel, JSContext *context, JSValueConst listener);
+// Gives event `name` of item `id` to `listener`, as listener(id, name,
+// ...args), with up to P2PML_CHANNEL_MAX_ARGS arguments. Bytes must be
+// malloc'd: those that go to JS become its ArrayBuffer's, and their pointer
+// is set to NULL; the caller frees the pointers that stay set. `listener`
+// stays the caller's. False, after its report, when JS throws, also when out
+// of memory.
+bool p2pml_listener_call(p2pml_engine *engine, JSValueConst listener, int32_t id, const char *name,
+                         size_t arg_count, p2pml_arg *args);
 // The strings of JS array `array`, as a new array of `*count` C strings (the
 // opposite of P2PML_ARG_STRINGS), for p2pml_strings_free. NULL, with a JS
 // exception, when a conversion fails or when out of memory. `array` stays the

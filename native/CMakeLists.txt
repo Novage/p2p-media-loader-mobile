@@ -92,7 +92,7 @@ endfunction()
 
 # The JS polyfills, in the order the engine evaluates them.
 set(POLYFILLS webidl.js dom_exception.js events.js encoding.js base64.js url.js fetch.js websocket.js
-  webrtc.js)
+  webrtc.js player.js)
 list(TRANSFORM POLYFILLS PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/src/polyfills/)
 embed_js(${CMAKE_BINARY_DIR}/polyfills.c p2pml_polyfills ${POLYFILLS})
 
@@ -107,6 +107,7 @@ endif()
 embed_js(${CMAKE_BINARY_DIR}/core_bundle.c p2pml_core_bundle ${CORE_BUNDLE})
 
 set(ENGINE_SOURCES src/engine.c src/encoding.c src/url.c src/modules.c src/channel.c src/http.c src/websocket.c src/rtc.c
+  src/player.c
   ${CMAKE_BINARY_DIR}/polyfills.c ${CMAKE_BINARY_DIR}/core_bundle.c)
 
 # Ada as released: C++20, without exceptions, RTTI and

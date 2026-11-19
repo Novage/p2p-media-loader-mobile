@@ -19,10 +19,18 @@ internal object NativeEngine {
 
     /**
      * Blocks until the engine is closed, and writes the engine's lines to [log] meanwhile; the
-     * requests of `fetch` go to [http], and the sockets of `WebSocket` to [ws]. False if the
-     * runtime or its globals could not be created, and no close came first.
+     * requests of `fetch` go to [http], the sockets of `WebSocket` to [ws], and the answers of the
+     * player bridge to [player]. False if the runtime or its globals could not be created, and no
+     * close came first.
      */
-    @JvmStatic external fun run(engine: Long, log: LogSink, http: HttpSink, ws: WsSink): Boolean
+    @JvmStatic
+    external fun run(
+        engine: Long,
+        log: LogSink,
+        http: HttpSink,
+        ws: WsSink,
+        player: PlayerSink,
+    ): Boolean
 
     /** False once the engine is closed, or when out of memory. */
     @JvmStatic external fun post(engine: Long, task: Runnable): Boolean
@@ -84,6 +92,14 @@ internal object NativeEngine {
         failed: Boolean,
     ): Boolean
 
+    /**
+     * Engine thread only, in a task: gives event [name] of load [id] to the player bridge
+     * (native/src/player.h), with its [texts], UTF-8 or null for none. False when JS did not take
+     * it. Throws [OutOfMemoryError].
+     */
+    @JvmStatic
+    external fun playerEvent(engine: Long, name: String, id: Int, texts: Array<ByteArray?>): Boolean
+
     /** Takes the engine's lines on the engine thread. [level] is a [JsLog.Level]'s ordinal. */
     fun interface LogSink {
         fun write(level: Int, message: String)
@@ -110,5 +126,17 @@ internal object NativeEngine {
         fun close(id: Int, code: Int, reason: ByteArray)
 
         fun cancel(id: Int)
+    }
+
+    /**
+     * The answers of the player bridge, on the engine thread (native/src/player.h): one for each
+     * load. Messages are UTF-8 bytes, as [WsSink]'s text.
+     */
+    interface PlayerSink {
+        fun miss(id: Int)
+
+        fun segment(id: Int, bytes: ByteArray)
+
+        fun fail(id: Int, message: ByteArray)
     }
 }

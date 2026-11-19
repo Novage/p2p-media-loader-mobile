@@ -5,6 +5,8 @@ import com.novage.p2pml.http.HttpEvents
 import com.novage.p2pml.http.SharedHttpClient
 import com.novage.p2pml.http.WsBridge
 import com.novage.p2pml.http.WsEvents
+import com.novage.p2pml.player.CoreSession
+import com.novage.p2pml.player.SegmentResult
 import java.util.concurrent.TimeUnit
 
 /**
@@ -32,6 +34,20 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
     // under [lock]; the engine thread may read it without the lock, because only that thread sets
     // it to zero.
     private var handle: Long = NativeEngine.create(userAgent.encodeToByteArray())
+
+    /** The player bridge: the core of this engine's player. */
+    val player = CoreSession { name, id, texts, notTaken ->
+        // Encoded on the caller's thread, not the engine's.
+        val bytes = Array(texts.size) { texts[it]?.encodeToByteArray() }
+        val posted = post {
+            if (!NativeEngine.playerEvent(handle, name, id, bytes)) {
+                notTaken()
+            }
+        }
+        if (!posted) {
+            notTaken()
+        }
+    }
 
     init {
         // Not inherited from the thread that creates the engine.
@@ -111,10 +127,21 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
 
                     override fun cancel(id: Int) = ws.cancel(id)
                 }
-            if (!NativeEngine.run(handle, sink, httpSink, wsSink)) {
+            val playerSink =
+                object : NativeEngine.PlayerSink {
+                    override fun miss(id: Int) = player.answer(id, SegmentResult.Miss)
+
+                    override fun segment(id: Int, bytes: ByteArray) =
+                        player.answer(id, SegmentResult.Data(bytes))
+
+                    override fun fail(id: Int, message: ByteArray) =
+                        player.answer(id, SegmentResult.Failed(message.decodeToString()))
+                }
+            if (!NativeEngine.run(handle, sink, httpSink, wsSink, playerSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")
             }
         } finally {
+            player.engineClosed()
             http.close()
             ws.close()
             synchronized(lock) {
