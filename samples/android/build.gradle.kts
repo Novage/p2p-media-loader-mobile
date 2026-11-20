@@ -51,8 +51,7 @@ tasks.named("check") { dependsOn("detektDebug", "detektDebugUnitTest") }
 tasks.named("detekt") { enabled = false }
 
 dependencies {
-    implementation(project(":core"))
+    implementation(project(":media3"))
     implementation(libs.media3.exoplayer)
-    implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
 }

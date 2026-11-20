@@ -9,13 +9,16 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.novage.p2pml.media3.Media3P2PEngine
 
-/** Plays the BBB live stream with Media3. */
+/** Plays the BBB live stream with Media3, through P2P Media Loader. */
 class MainActivity : Activity() {
     private lateinit var playerView: PlayerView
     private var player: ExoPlayer? = null
+    private var engine: Media3P2PEngine? = null
 
     private val listener =
         object : Player.Listener {
@@ -61,8 +64,11 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        val engine = Media3P2PEngine()
+        this.engine = engine
         player =
             ExoPlayer.Builder(this)
+                .setMediaSourceFactory(engine.mediaSourceFactory(DefaultDataSource.Factory(this)))
                 .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
                 .setHandleAudioBecomingNoisy(true)
                 .build()
@@ -84,6 +90,9 @@ class MainActivity : Activity() {
         playerView.player = null
         player?.release()
         player = null
+        // After the player, which loads through the engine until it is released.
+        engine?.close()
+        engine = null
     }
 
     private companion object {

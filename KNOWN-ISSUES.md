@@ -49,11 +49,74 @@ that describes the behaviour, not here.
   core: the events (`addEventListener`, `removeEventListener`),
   `applyDynamicConfig`, `updatePlayback`, `setManifestResponseUrl`,
   `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
-  (`isSegmentIndex`, `processSegmentIndex`). There is no player integration
-  yet: no `:media3` (`Media3P2PEngine`) and no `:proxy` module
-  (specs/api.md). With no playback state, the core sees an empty buffer:
+  (`isSegmentIndex`, `processSegmentIndex`), and `Media3P2PEngine` has the
+  same gaps. There is no `:proxy` module (specs/api.md). With no playback
+  state, the core sees an empty buffer:
   every request is urgent and goes over HTTP, so a player gets no segment
   from peers.
+- **Media3 plays one item at a time through the engine.** Each source of
+  `Media3P2PEngine` readies the core for itself when the player prepares it
+  (specs/api.md, "Media3"). ExoPlayer prepares the next item of a playlist
+  when it starts to buffer it, before the current item ends, and every item
+  at once when lazy preparation is off; a preload (`DefaultPreloadManager`)
+  also prepares a source. The item that plays then loses its core: a seek
+  back in it loads without P2P, and the playlists of a live item mix into
+  the next item's swarm. An app gives the player one item at a time, and
+  does not preload through the engine.
+- **The core does not use Media3's `upstream` for its segments.** A cache
+  (`CacheDataSource`), a URL signer (`ResolvingDataSource`) or request
+  headers in `upstream` apply to the playlists, keys and the segments that
+  the core does not load, but the core loads its segments itself, as in a
+  browser. A cached segment loads again, and a segment from the core does
+  not go into the cache. A segment that needs the signer or the headers
+  fails in the core, after its retries, and then loads through `upstream`.
+- **A player that stops keeps the core in its swarm.** `player.stop()`
+  releases the sources as an error does, and a source cannot tell the two
+  apart, so its release keeps the core for a recovery (specs/api.md,
+  "Media3"). Until `close()` or the next source, the core keeps its peers
+  and its tracker, and uploads to peers. A fix resets the core when the
+  player becomes idle without an error; it needs the engine to watch the
+  player, which comes with the playback state.
+- **`Media3P2PEngine` makes HLS sources only.** Its factory takes the place
+  of `DefaultMediaSourceFactory`: a DASH, SmoothStreaming or progressive
+  item fails, and the factory does not add what `DefaultMediaSourceFactory`
+  adds to an item, such as side-loaded subtitles, clipping and ads. DASH is
+  in the scope (specs/scope.md) and not done.
+- **Media3's bandwidth meter can overestimate a segment from the core.** The
+  meter times a transfer by the clock. A segment that the core already
+  holds, from a peer or a prefetch, comes at once and reads as very fast, so
+  Media3's adaptive bitrate can switch up to a quality that the network
+  cannot carry. The web adapters give their players the core's `bandwidth`
+  instead. A segment that the core fails, before it loads through
+  `upstream`, is a transfer of no bytes: when it is the meter's first one,
+  the meter's estimate is 0 until the next transfer. A fix gives the engine
+  a bandwidth meter that uses the core's `bandwidth`; it comes with the
+  playback state, which makes segments from peers common.
+- **A released Media3 source's playlist can reach the next source's core.**
+  When the app gives the player a new item, Media3 prepares the new source,
+  which readies the core, before it releases the old one. A playlist of the
+  old source that arrives in that time reaches the core, which registers its
+  streams; with no `swarmId`, it can name the swarm. The new item then
+  plays without P2P for that session. The engine drops a playlist whose load
+  Media3 cancelled, but not one that ends before the release. A fix ties
+  each data source to its own source.
+- **Media3's segment URLs and the core's keys can differ.** The core
+  resolves a playlist's URIs with the WHATWG URL parser, which lowercases
+  the host, drops a default port and percent-encodes spaces and non-ASCII
+  characters; Media3 resolves them as written. For a stream with such a
+  URL, `isSegmentLoadable` is false for every segment, and the stream plays
+  without P2P. A browser resolves both with the same parser. A fix
+  normalises the request URL in the core.
+- **The Media3 engine asks for whole playlists.** The core reads a delta
+  update (`EXT-X-SKIP`) as a whole playlist and would number its segments
+  wrongly, so the engine removes `_HLS_skip` from each playlist request
+  (specs/api.md, "Media3"). A live stream with a long window then sends its
+  whole playlist at each reload. A fix reads delta updates in the core.
+- **A resumed byte-range segment counts as a registry miss.** When a read
+  from `upstream` fails, Media3 asks for the rest of the segment, and the
+  Media3 engine asks the core with that partial range. The core does not
+  know it, so it logs and counts a registry miss, though the playlists
+  agree. The request loads through `upstream`, as it would anyway.
 - **A Gradle deprecation does not fail the build.** Two plugins call
   `Configuration.setVisible`, which Gradle 9.9 deprecates: detekt
   2.0.0-alpha.6 (`DetektBasePlugin`, `DetektPlugin`) and Spotless 8.9.0

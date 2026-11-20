@@ -31,7 +31,7 @@ uses the core:
 - **The player's engine,** as the web library's `HlsJsP2PEngine`: it is made
   with `{ core: CoreConfig }`, gives `getConfig()` and `destroy()`, and plugs
   into the player. For Media3 it is `Media3P2PEngine`, in a module of its
-  own (see KNOWN-ISSUES.md for the parts that the library does not have).
+  own (see "Media3").
 - **The core,** as the web library's `Core`: `Core(config)`, `getConfig()`,
   `processManifest(url, requestedUrl, data)`,
   `isSegmentLoadable(url, byteRange)`, `loadSegment(url, byteRange)`,
@@ -84,6 +84,59 @@ HTTP.
   was no redirect.
 - **Threads:** every call can come from any thread; the core's work is on
   the engine thread.
+
+## Media3
+
+`Media3P2PEngine` (`:media3`) is the player's engine for Media3, as
+`HlsJsP2PEngine` is for HLS.js: `Media3P2PEngine(Media3P2PEngineConfig(core))`,
+`getConfig()` and `destroy()` with their JS meanings, and `close()`, which
+ends its core. `mediaSourceFactory(upstream)` is its counterpart of
+`getConfigForHlsJs()`: a factory of HLS sources for ExoPlayer, which plays
+through the core. `upstream` loads what the core does not.
+
+```kotlin
+val engine = Media3P2PEngine(Media3P2PEngineConfig(CoreConfig().apply { swarmId = "..." }))
+val player =
+    ExoPlayer.Builder(context)
+        .setMediaSourceFactory(engine.mediaSourceFactory(DefaultDataSource.Factory(context)))
+        .build()
+// Later: release the player first, which loads through the engine until then.
+player.release()
+engine.close()
+```
+
+- **Playlists:** they load through `upstream`, and the core gets each one,
+  with its URL after redirects, which its URIs resolve against, and the URL
+  that the player asked for, as the HLS.js engine gives them. The engine
+  asks for each playlist whole: it removes `_HLS_skip` from the request,
+  because the core reads a delta update as a whole playlist and would number
+  its segments wrongly. The playlist of a load that Media3 cancelled, such as
+  one of a source that it released, does not reach the core.
+- **Segments:** a segment that the core knows (`isSegmentLoadable`, with the
+  request's byte range) loads through the core. Every other segment request,
+  such as an init segment or an LL-HLS part, loads through `upstream`. A
+  segment that the core loads does not go through `upstream`: a cache or a
+  URL signer in `upstream` does not see it (KNOWN-ISSUES.md).
+- **Other requests,** such as keys and steering manifests, go to `upstream`
+  untouched: the engine handles playlists and segments only.
+- **A new source:** each source of the factory readies the core for itself
+  (`destroy()`) when the player prepares it, before it loads its first
+  playlist, as the HLS.js engine does when a source loads. After an error,
+  Media3 releases the source and prepares it again: the source keeps the
+  core, as the HLS.js engine keeps its core when it recovers. The core
+  recovers on its own, and falls back to HTTP where it must; a case that it
+  cannot recover from is a defect of the core. An engine serves one player,
+  and plays one item at a time (KNOWN-ISSUES.md).
+- **Cancellation:** Media3 interrupts the thread of a load that it cancels,
+  and the interrupt aborts the core's load.
+- **Errors:** a load that the core fails or aborts goes to `upstream`, which
+  can have what the core does not, such as the app's request headers: a
+  failure costs P2P for that request, not the playback. The core keeps one
+  load for each stream type, and aborts the open one when Media3 loads two
+  renditions of one type at once, such as two audio renditions.
+- **Bandwidth:** Media3's bandwidth meter times each transfer by the clock.
+  The engine reports a segment from the core from the start of the core's
+  wait, so the meter sees the wait (KNOWN-ISSUES.md).
 
 ## Without the native code
 

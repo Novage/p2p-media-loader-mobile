@@ -85,6 +85,9 @@ its own, tested with web peers in the same swarm.
     device test or the `tools/node-peer` checks.
   - For a change to `native/` or to the engine: also
     `./gradlew :core:connectedAndroidDeviceTest` on a connected device.
+    For a change to `media3/` or to `Core`: also
+    `./gradlew :media3:connectedAndroidTest` (its playback test needs the
+    internet).
     For a change to the WebRTC binding, also the phone with the Node peer
     in one swarm (`tools/node-peer/README.md`, "A phone in the swarm").
   - For a change in `tools/node-peer`: `npm test` and `npm run type-check`

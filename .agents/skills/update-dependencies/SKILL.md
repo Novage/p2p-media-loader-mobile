@@ -55,7 +55,7 @@ disagree, AGENTS.md is right.
 | Kotlin (KMP plugin)                                   | catalog `kotlin`                                                                   | `gh api repos/JetBrains/kotlin/releases`                                                                                                                   |
 | detekt                                                | catalog `detekt`                                                                   | `gh api repos/detekt/detekt/releases`                                                                                                                      |
 | Spotless, ktfmt                                       | catalog `spotless`, `ktfmt`                                                        | `gh api repos/diffplug/spotless/releases`, `gh api repos/facebook/ktfmt/releases`                                                                          |
-| Media3 (sample app)                                   | catalog `media3`                                                                   | `gh api repos/androidx/media/releases`                                                                                                                     |
+| Media3 (`:media3`, sample app)                        | catalog `media3`                                                                   | `gh api repos/androidx/media/releases`                                                                                                                     |
 | androidx.test runner                                  | catalog `androidx-test-runner`                                                     | Google Maven `androidx/test/runner/maven-metadata.xml`                                                                                                     |
 | Android SDK levels                                    | catalog `android-*`                                                                | the platforms that the SDK Manager offers                                                                                                                  |
 | NDK, its clang-format, CMake                          | catalog `ndk`, `clang-format`, `cmake`                                             | `https://dl.google.com/android/repository/repository2-3.xml`; the NDK's `source.properties` (`Pkg.ReleaseName`); <https://github.com/android/ndk/releases> |
@@ -366,9 +366,12 @@ For every update, before you report it done:
    C++ flags:
    `./gradlew :core:connectedAndroidDeviceTest` on the phone. Ask the user
    to connect it.
-4. After the push that the user asks for: the CI run of the commit passes
+4. For a change to Media3 or the web core:
+   `./gradlew :media3:connectedAndroidTest` on the phone (it needs the
+   internet).
+5. After the push that the user asks for: the CI run of the commit passes
    (`gh run list --branch <branch>`, then `gh run watch <id>`).
-5. The report names each version change (old and new), the release notes
+6. The report names each version change (old and new), the release notes
    that matter, each fix the update needed, and the measured sizes and times
    where the native code changed.
 

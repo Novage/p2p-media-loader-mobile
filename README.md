@@ -39,8 +39,9 @@ open the project in Android Studio, which writes `local.properties`.
 | Gradle module     | What it is                                                                                         |
 | ----------------- | -------------------------------------------------------------------------------------------------- |
 | `core`            | The public `Core`, and the Kotlin side of the engine that runs the web core (Kotlin Multiplatform) |
+| `media3`          | `Media3P2PEngine`: Media3 plays HLS through the core (specs/api.md, "Media3")                      |
 | `native`          | QuickJS, the JS engine in C, and the web core's bundle                                             |
-| `samples/android` | A sample app that plays the BBB live stream with Media3                                            |
+| `samples/android` | A sample app that plays the BBB live stream with Media3, through `media3`                          |
 
 `tools/node-peer` is a Node tool, not a Gradle module: it runs the web core as
 a peer; see its README.
