@@ -4,6 +4,6 @@
   "description": "The web core that libp2pml.so embeds (see specs/engine.md, \"Modules\")",
   "license": "Apache-2.0",
   "dependencies": {
-    "p2p-media-loader-core": "5.0.0-alpha.7"
+    "p2p-media-loader-core": "5.0.0-alpha.8"
   }
 }
