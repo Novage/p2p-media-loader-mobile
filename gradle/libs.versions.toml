@@ -4,7 +4,7 @@ android-compileSdk = "37"
 android-targetSdk = "36"
 # What an app that uses the library must compile against (aar-metadata).
 android-minCompileSdk = "37"
-agp = "9.5.1"
+agp = "9.5.2"
 kotlin = "2.4.21"
 media3 = "1.11.1"
 spotless = "8.9.0"
