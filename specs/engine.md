@@ -393,7 +393,7 @@ the polyfills are, and `native/src/player.c` gives it its natives. A player
 integration does what a web player's adapter does (the web repository's
 `specs/player-adapters.md`): it gives the core every manifest, loads the
 segments through it, loads every other request itself, and reports the
-playback state (KNOWN-ISSUES.md: the bridge has no playback state).
+playback state.
 
 - **The events,** from Kotlin to JS: `CoreSession` (Kotlin, any thread)
   posts each one as a task, and on the engine thread `playerEvent` (JNI)
@@ -415,14 +415,17 @@ playback state (KNOWN-ISSUES.md: the bridge has no playback state).
     does not know fails.
   - `abort(url, range)` is `abortSegmentLoading`; `destroy()` is `destroy`,
     which, as in JS, readies the core for the next source.
+  - `playback(bufferAhead, rate)` is `updatePlayback`, with the two numbers
+    as text.
 - **The answers,** from JS to Kotlin, one for each query and each load,
   through the natives and the client of `p2pml_engine_run` (`PlayerSink` in
   Kotlin):
   - `playerValue(id, json)`: a query's value; with no core, `false` and
     `null`;
-  - `playerData(id, bytes, bandwidth)`: the whole segment, copied once from
-    its `ArrayBuffer` into a Kotlin `ByteArray` (`loadSegment` gives the
-    segment at its end, not in parts), and the bandwidth the core measured;
+  - `playerData(id, bytes, bandwidth, main)`: the whole segment, copied once
+    from its `ArrayBuffer` into a Kotlin `ByteArray` (`loadSegment` gives the
+    segment at its end, not in parts), the bandwidth the core measured, and
+    whether the segment's `streamType` is `"main"`;
   - `playerFail(id, type, message)`: the core's error type (`"failed"`,
     `"aborted"`) and its message. `destroy` fails the open loads as
     `"aborted"` before it calls the core's `destroy()`, which can throw. The

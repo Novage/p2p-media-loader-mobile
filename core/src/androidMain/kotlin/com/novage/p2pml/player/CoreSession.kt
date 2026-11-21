@@ -10,8 +10,11 @@ internal sealed interface Answer {
     /** The answer of a query, as JSON. */
     class Value(val json: String) : Answer
 
-    /** The whole segment of a load, and the bandwidth (bits per second) the core measured. */
-    class Segment(val bytes: ByteArray, val bandwidth: Double) : Answer
+    /**
+     * The whole segment of a load, the bandwidth (bits per second) the core measured, and whether
+     * its stream is of the main type.
+     */
+    class Segment(val bytes: ByteArray, val bandwidth: Double, val main: Boolean) : Answer
 
     /** A failed load: the error's type, such as "failed" or "aborted", and its message. */
     class Failed(val type: String, val message: String) : Answer

@@ -133,8 +133,12 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
                     override fun value(id: Int, json: ByteArray) =
                         player.answer(id, Answer.Value(json.decodeToString()))
 
-                    override fun segment(id: Int, bytes: ByteArray, bandwidth: Double) =
-                        player.answer(id, Answer.Segment(bytes, bandwidth))
+                    override fun segment(
+                        id: Int,
+                        bytes: ByteArray,
+                        bandwidth: Double,
+                        main: Boolean,
+                    ) = player.answer(id, Answer.Segment(bytes, bandwidth, main))
 
                     override fun fail(id: Int, type: ByteArray, message: ByteArray) =
                         player.answer(

@@ -8,8 +8,9 @@
 // - loadable(id, url, range) and config(id): isSegmentLoadable and
 //   getConfig, answered at once with natives.playerValue(id, json);
 // - load(id, url, range): loadSegment, answered once, later, with
-//   playerData(id, bytes, bandwidth) or playerFail(id, type, message);
+//   playerData(id, bytes, bandwidth, main) or playerFail(id, type, message);
 // - abort(0, url, range): abortSegmentLoading;
+// - playback(0, bufferAhead, rate): updatePlayback, with numbers as text;
 // - destroy(0): destroy, which readies the core for the next source.
 (natives) => {
   const { playerListen, playerValue, playerData, playerFail, reportError } =
@@ -118,7 +119,12 @@
       core.loadSegment(url, { byteRange: rangeOf(range) }).then(
         (response) =>
           settle(id, () =>
-            playerData(id, new Uint8Array(response.data), response.bandwidth),
+            playerData(
+              id,
+              new Uint8Array(response.data),
+              response.bandwidth,
+              response.streamType === "main",
+            ),
           ),
         (error) => settle(id, () => fail(id, error)),
       );
@@ -126,6 +132,13 @@
 
     abort(id, url, range) {
       core?.abortSegmentLoading(url, rangeOf(range));
+    },
+
+    playback(id, bufferAhead, rate) {
+      core?.updatePlayback({
+        bufferAhead: Number(bufferAhead),
+        rate: Number(rate),
+      });
     },
 
     // As in JS, the core stays: destroy() readies it for the next source.

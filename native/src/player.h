@@ -19,9 +19,10 @@
 struct p2pml_player_client {
   // The answer of query `id`: `length` bytes of JSON.
   void (*value)(void *data, int32_t id, const uint8_t *json, size_t length);
-  // The whole segment of load `id`, and the bandwidth (bits per second) that
-  // the core measured for it.
-  void (*segment)(void *data, int32_t id, const uint8_t *bytes, size_t length, double bandwidth);
+  // The whole segment of load `id`, the bandwidth (bits per second) that the
+  // core measured for it, and whether its stream is of the main type.
+  void (*segment)(void *data, int32_t id, const uint8_t *bytes, size_t length, double bandwidth,
+                  bool main);
   // Load `id` failed: the type of the error, such as "failed" or "aborted",
   // and its message.
   void (*fail)(void *data, int32_t id, const uint8_t *type, size_t type_length,

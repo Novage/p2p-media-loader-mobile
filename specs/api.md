@@ -35,14 +35,17 @@ uses the core:
 - **The core,** as the web library's `Core`: `Core(config)`, `getConfig()`,
   `processManifest(url, requestedUrl, data)`,
   `isSegmentLoadable(url, byteRange)`, `loadSegment(url, byteRange)`,
-  `abortSegmentLoading(url, byteRange)` and `destroy()`. A player
-  integration calls it as a web adapter calls the JS core: it gives the core
-  every manifest, asks `isSegmentLoadable` for each segment, loads it with
-  `loadSegment` when it is true, and loads every other request itself.
+  `abortSegmentLoading(url, byteRange)`, `updatePlayback(state)` and
+  `destroy()`. A player integration calls it as a web adapter calls the JS
+  core: it gives the core every manifest, asks `isSegmentLoadable` for each
+  segment, loads it with `loadSegment` when it is true, loads every other
+  request itself, and reports the playback state (`PlaybackState`: the
+  seconds buffered ahead of the playhead, and the rate, 0 when the player
+  does not play). With no report, the core takes an empty buffer, and every
+  request is urgent.
 
 The JS core's calls that `Core` does not have, such as the events
-(`addEventListener`), `applyDynamicConfig` and `updatePlayback` (the playback
-state), are in KNOWN-ISSUES.md.
+(`addEventListener`) and `applyDynamicConfig`, are in KNOWN-ISSUES.md.
 
 ## The settings
 
@@ -73,8 +76,8 @@ HTTP.
   `destroy()` keeps its JS meaning: it readies the core for the next source.
 - **`processManifest`** takes the manifest as a `String` only (JS also
   takes bytes, and an optional `protocol`), and returns nothing: the JS
-  return value places a player in a live stream, which comes with the
-  playback state.
+  return value places a player in a live stream, which the Media3 engine
+  does not do yet (KNOWN-ISSUES.md).
 - **`manifestParsers`** is not a setting: the core has the HLS parser.
 - **Java:** `getConfig`, `isSegmentLoadable` and `loadSegment` declare their
   exceptions (`InterruptedIOException`, and `IOException` for `loadSegment`),
@@ -90,16 +93,17 @@ HTTP.
 `Media3P2PEngine` (`:media3`) is the player's engine for Media3, as
 `HlsJsP2PEngine` is for HLS.js: `Media3P2PEngine(Media3P2PEngineConfig(core))`,
 `getConfig()` and `destroy()` with their JS meanings, and `close()`, which
-ends its core. `mediaSourceFactory(upstream)` is its counterpart of
-`getConfigForHlsJs()`: a factory of HLS sources for ExoPlayer, which plays
-through the core. `upstream` loads what the core does not.
+ends its core. `buildPlayer(context, builder, upstream)` is its counterpart
+of `getConfigForHlsJs()` and `bindHls()` together: one call, so that an app
+cannot set up a part of it only. On the app's `ExoPlayer.Builder` it sets the
+media source factory, of HLS sources that play through the core, and the
+bandwidth meter; then it builds the player and watches it for the core.
+`upstream` (default: `DefaultDataSource`) loads what the core does not. An
+engine has one player: a second call throws.
 
 ```kotlin
 val engine = Media3P2PEngine(Media3P2PEngineConfig(CoreConfig().apply { swarmId = "..." }))
-val player =
-    ExoPlayer.Builder(context)
-        .setMediaSourceFactory(engine.mediaSourceFactory(DefaultDataSource.Factory(context)))
-        .build()
+val player = engine.buildPlayer(context, ExoPlayer.Builder(context).setHandleAudioBecomingNoisy(true))
 // Later: release the player first, which loads through the engine until then.
 player.release()
 engine.close()
@@ -119,7 +123,7 @@ engine.close()
   URL signer in `upstream` does not see it (KNOWN-ISSUES.md).
 - **Other requests,** such as keys and steering manifests, go to `upstream`
   untouched: the engine handles playlists and segments only.
-- **A new source:** each source of the factory readies the core for itself
+- **A new source:** each HLS source of the player readies the core for itself
   (`destroy()`) when the player prepares it, before it loads its first
   playlist, as the HLS.js engine does when a source loads. After an error,
   Media3 releases the source and prepares it again: the source keeps the
@@ -127,6 +131,18 @@ engine.close()
   recovers on its own, and falls back to HTTP where it must; a case that it
   cannot recover from is a defect of the core. An engine serves one player,
   and plays one item at a time (KNOWN-ISSUES.md).
+- **The playback state:** the engine reports it to the core
+  (`updatePlayback`) on each change of the player's state, play, pause,
+  seek, speed and timeline, after each chunk that the player loads, and once
+  a second: the buffer ahead is the player's buffered position less its
+  position, in the current item, and the rate is the player's speed while
+  it plays, else 0. Media3 has no event when its buffer grows, and gives its
+  state on its application thread only.
+- **A stop:** when the app stops the player (`STATE_IDLE` with no error) or
+  clears its items, the engine readies the core (`destroy()`), so that it
+  leaves its swarm, as the HLS.js engine's core when it is destroyed. The
+  next source that the player prepares readies it again. An error also
+  makes the player idle; the core stays for the recovery.
 - **Cancellation:** Media3 interrupts the thread of a load that it cancels,
   and the interrupt aborts the core's load.
 - **Errors:** a load that the core fails or aborts goes to `upstream`, which
@@ -134,9 +150,17 @@ engine.close()
   failure costs P2P for that request, not the playback. The core keeps one
   load for each stream type, and aborts the open one when Media3 loads two
   renditions of one type at once, such as two audio renditions.
-- **Bandwidth:** Media3's bandwidth meter times each transfer by the clock.
-  The engine reports a segment from the core from the start of the core's
-  wait, so the meter sees the wait (KNOWN-ISSUES.md).
+- **Bandwidth:** the core is the source of the player's bandwidth estimate.
+  The engine's bandwidth meter gives the player's adaptive bitrate the
+  `bandwidth` that the core gave with its last segment of the main stream,
+  as the web adapters do: the core measures its downloads, HTTP and P2P, and
+  the clock says nothing about the network for a segment from a peer or from
+  the core's store, which can come at once. The core measures each stream
+  type in its own way, so the meter does not count a segment of a secondary
+  stream (`SegmentResponse.streamType`), such as an audio rendition, as
+  HLS.js counts only its main fragments. Until the core gives a bandwidth
+  (no core, P2P off, or before its first main segment), the estimate is a
+  `DefaultBandwidthMeter`'s, which times the transfers of `upstream`.
 
 ## Without the native code
 

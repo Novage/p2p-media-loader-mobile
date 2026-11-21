@@ -154,7 +154,7 @@ static void fake_ws_cancel(void *data, int32_t id) {
 
 // The fake player client of every test engine: fakePlayer.answers records
 // each answer to a call as {id, kind}: "value" with `value` (the JSON text),
-// "segment" with `data` (a Uint8Array) and `bandwidth`, "fail" with `type` and
+// "segment" with `data` (a Uint8Array), `bandwidth` and `main`, "fail" with `type` and
 // `message`. new_answer makes the {id, kind} object; its caller sets the other
 // members and pushes it.
 static JSValue new_answer(JSContext *context, int32_t id, const char *kind) {
@@ -173,11 +173,12 @@ static void fake_player_value(void *data, int32_t id, const uint8_t *json, size_
 }
 
 static void fake_player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length,
-                                double bandwidth) {
+                                double bandwidth, bool main) {
   JSContext *context = p2pml_engine_context(data);
   JSValue answer = new_answer(context, id, "segment");
   CHECK(JS_SetPropertyStr(context, answer, "data", bytes_value(context, bytes, length)) >= 0);
   CHECK(JS_SetPropertyStr(context, answer, "bandwidth", JS_NewFloat64(context, bandwidth)) >= 0);
+  CHECK(JS_SetPropertyStr(context, answer, "main", JS_NewBool(context, main)) >= 0);
   push_to(context, "fakePlayer", "answers", answer);
 }
 

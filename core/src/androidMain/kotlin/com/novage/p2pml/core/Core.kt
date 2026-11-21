@@ -10,12 +10,34 @@ import org.json.JSONObject
 /** A byte range of a segment, as the JS core's `ByteRange`: [start] to [end], inclusive. */
 public data class ByteRange(public val start: Long, public val end: Long)
 
+/**
+ * The player's playback state, as the JS core's `PlaybackState`: the seconds of media buffered
+ * ahead of the playhead, in the buffered range that holds the playhead (0 when the playhead is in a
+ * gap), and the playback rate, 0 when the player does not play. Both are finite, 0 or more.
+ */
+public data class PlaybackState(public val bufferAhead: Double, public val rate: Double)
+
+/** The type of a stream, as the JS core's `StreamType`. */
+public enum class StreamType {
+    /** The main stream: the video, or the video and the audio together. */
+    MAIN,
+
+    /** A secondary stream, such as an audio rendition of its own. */
+    SECONDARY,
+}
+
 /** A segment that the core loaded, as the JS core's `SegmentResponse`. */
 public class SegmentResponse(
     /** The whole segment. */
     public val data: ByteArray,
     /** The bandwidth that the core measured for it, in bits per second. */
     public val bandwidth: Double,
+    /**
+     * The type of the segment's stream. The core measures [bandwidth] for each stream type in its
+     * own way: a player that estimates its bandwidth from every segment counts the main stream
+     * only.
+     */
+    public val streamType: StreamType,
 )
 
 /**
@@ -108,7 +130,12 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
                 throw interrupted
             }
         return when (answer) {
-            is Answer.Segment -> SegmentResponse(answer.bytes, answer.bandwidth)
+            is Answer.Segment ->
+                SegmentResponse(
+                    answer.bytes,
+                    answer.bandwidth,
+                    if (answer.main) StreamType.MAIN else StreamType.SECONDARY,
+                )
             is Answer.Failed -> throw CoreRequestError(answer.type, answer.message)
             // The bridge answers a load with a segment or a failure only.
             is Answer.Value -> error("A load was answered with a value")
@@ -119,6 +146,15 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
     @JvmOverloads
     public fun abortSegmentLoading(url: String, byteRange: ByteRange? = null) {
         session.send("abort", listOf(url, byteRange?.text()))
+    }
+
+    /**
+     * Gives the core the player's playback state, as the JS core's `updatePlayback`: on each
+     * change, and when the player buffers more. With no report, the core takes an empty buffer, and
+     * every request is urgent (specs/api.md).
+     */
+    public fun updatePlayback(state: PlaybackState) {
+        session.send("playback", listOf(state.bufferAhead.toString(), state.rate.toString()))
     }
 
     /**

@@ -137,9 +137,10 @@ internal object NativeEngine {
         fun value(id: Int, json: ByteArray)
 
         /**
-         * The whole segment of load [id], and the bandwidth (bits per second) the core measured.
+         * The whole segment of load [id], the bandwidth (bits per second) the core measured, and
+         * whether its stream is of the main type.
          */
-        fun segment(id: Int, bytes: ByteArray, bandwidth: Double)
+        fun segment(id: Int, bytes: ByteArray, bandwidth: Double, main: Boolean)
 
         /** Load [id] failed: the error's [type], such as "failed" or "aborted", and its message. */
         fun fail(id: Int, type: ByteArray, message: ByteArray)

@@ -98,7 +98,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     return JNI_ERR;
   }
   player_sink_value = (*env)->GetMethodID(env, player_sink, "value", "(I[B)V");
-  player_sink_segment = (*env)->GetMethodID(env, player_sink, "segment", "(I[BD)V");
+  player_sink_segment = (*env)->GetMethodID(env, player_sink, "segment", "(I[BDZ)V");
   player_sink_fail = (*env)->GetMethodID(env, player_sink, "fail", "(I[B[B)V");
   if (player_sink_value == NULL || player_sink_segment == NULL || player_sink_fail == NULL) {
     return JNI_ERR;
@@ -340,7 +340,7 @@ static void player_value(void *data, int32_t id, const uint8_t *json, size_t len
 }
 
 static void player_segment(void *data, int32_t id, const uint8_t *bytes, size_t length,
-                           double bandwidth) {
+                           double bandwidth, bool main) {
   engine_sink *player = data;
   JNIEnv *env = player->env;
   if ((*env)->ExceptionCheck(env)) {
@@ -349,7 +349,7 @@ static void player_segment(void *data, int32_t id, const uint8_t *bytes, size_t 
   jbyteArray array = byte_array_of(env, bytes, length);
   if (array != NULL) {
     (*env)->CallVoidMethod(env, player->sink, player_sink_segment, (jint)id, array,
-                           (jdouble)bandwidth);
+                           (jdouble)bandwidth, (jboolean)main);
   }
   (*env)->DeleteLocalRef(env, array);
   close_on_exception(env, player->engine);

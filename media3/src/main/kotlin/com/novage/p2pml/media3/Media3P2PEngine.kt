@@ -1,21 +1,26 @@
 package com.novage.p2pml.media3
 
+import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ForwardingMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.WrappingMediaSource
 import androidx.media3.exoplayer.upstream.CmcdConfiguration
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.exoplayer.util.ReleasableExecutor
 import androidx.media3.extractor.text.SubtitleParser
 import com.google.common.base.Supplier
 import com.novage.p2pml.core.Core
 import com.novage.p2pml.core.CoreConfig
+import com.novage.p2pml.core.PlaybackState
 import java.io.InterruptedIOException
 
 /** The settings of a [Media3P2PEngine], as the web library's `HlsJsP2PEngineConfig`. */
@@ -28,22 +33,28 @@ constructor(
 
 /**
  * Plays HLS in Media3 through the P2P Media Loader core, as the web library's `HlsJsP2PEngine`
- * plays it in HLS.js (specs/api.md, "Media3"). Give the player [mediaSourceFactory]: the core gets
- * every playlist and loads the segments it knows; everything else goes to the given data sources.
+ * plays it in HLS.js (specs/api.md, "Media3"). [buildPlayer] makes the player: the core gets every
+ * playlist, loads the segments it knows, and gets the player's playback state; everything else goes
+ * to the given data sources.
  *
- * The engine serves one player and plays one source at a time: each source that the factory makes
- * readies the core for it when the player prepares it. [close] ends the core; close the engine
- * after the player.
+ * The engine serves one player and plays one source at a time: each source readies the core for it
+ * when the player prepares it. [close] ends the core; close the engine after the player.
  */
-public class Media3P2PEngine internal constructor(private val core: Core) : AutoCloseable {
+public class Media3P2PEngine
+internal constructor(
+    private val core: Core,
+    // Where the playback state goes: the core, or a test.
+    private val onPlayback: (PlaybackState) -> Unit = core::updatePlayback,
+) : AutoCloseable {
     @JvmOverloads
     public constructor(
         config: Media3P2PEngineConfig = Media3P2PEngineConfig()
     ) : this(Core(config.core))
 
     // The source that the core serves: the one that the player prepared last. Media3 prepares
-    // sources on its playback thread.
-    private var coreSource: MediaSource? = null
+    // sources on its playback thread; a stop forgets it on the player's thread.
+    @Volatile private var coreSource: MediaSource? = null
+    @Volatile private var watch: PlayerWatch? = null
 
     /**
      * The settings that the engine uses, as `HlsJsP2PEngine.getConfig()`: the core's, with its
@@ -55,24 +66,56 @@ public class Media3P2PEngine internal constructor(private val core: Core) : Auto
     public fun getConfig(): Media3P2PEngineConfig = Media3P2PEngineConfig(core.getConfig())
 
     /**
-     * A factory of HLS media sources that play through the core, for
-     * `ExoPlayer.Builder.setMediaSourceFactory`. [upstream] loads what the core does not: the
+     * Builds the player that plays through the core, as the web library's `HlsJsP2PEngine` with
+     * HLS.js. On [builder], it sets the media source factory, of HLS sources, and the bandwidth
+     * meter, which takes the core's bandwidth for the core's segments; settings of these two on
+     * [builder] do not stay. Then it watches the player for the core: its playback state, and a
+     * stop, which takes the core out of its swarm. [upstream] loads what the core does not: the
      * playlists, the segments that the core does not know, keys and every other request.
+     *
+     * Call it on the thread that uses the player, once: the engine serves one player.
+     *
+     * @throws IllegalStateException when the engine has a player already.
      */
     @OptIn(UnstableApi::class)
-    public fun mediaSourceFactory(upstream: DataSource.Factory): MediaSource.Factory =
+    @JvmOverloads
+    public fun buildPlayer(
+        context: Context,
+        builder: ExoPlayer.Builder = ExoPlayer.Builder(context),
+        upstream: DataSource.Factory = DefaultDataSource.Factory(context),
+    ): ExoPlayer {
+        check(watch == null) { "The engine has a player already" }
+        val meter = CoreBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(context))
+        val player =
+            builder
+                .setMediaSourceFactory(mediaSourceFactory(upstream))
+                .setBandwidthMeter(meter)
+                .build()
+        val watch = PlayerWatch(player, onPlayback, ::destroy)
+        // Set after the start, which throws on a thread that is not the player's.
+        watch.start()
+        this.watch = watch
+        return player
+    }
+
+    /** The media sources that play through the core. */
+    @OptIn(UnstableApi::class)
+    internal fun mediaSourceFactory(upstream: DataSource.Factory): MediaSource.Factory =
         CoreSourceFactory(HlsMediaSource.Factory(P2pHlsDataSourceFactory(core, upstream)))
 
     /**
      * Readies the core for the next source, as `HlsJsP2PEngine.destroy()`: its streams, segments
-     * and peers go. The factory's sources call it themselves.
+     * and peers go. The engine calls it itself when the app stops the player; the next source that
+     * the player prepares readies the core again.
      */
     public fun destroy() {
+        coreSource = null
         core.destroy()
     }
 
-    /** Ends the core: the segments load through upstream after it. */
+    /** Ends the core and the watch of the player: the segments load through upstream after it. */
     override fun close() {
+        watch?.stop()
         core.close()
     }
 

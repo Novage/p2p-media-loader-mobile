@@ -9,7 +9,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.novage.p2pml.media3.Media3P2PEngine
@@ -67,11 +66,13 @@ class MainActivity : Activity() {
         val engine = Media3P2PEngine()
         this.engine = engine
         player =
-            ExoPlayer.Builder(this)
-                .setMediaSourceFactory(engine.mediaSourceFactory(DefaultDataSource.Factory(this)))
-                .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
-                .setHandleAudioBecomingNoisy(true)
-                .build()
+            engine
+                .buildPlayer(
+                    this,
+                    ExoPlayer.Builder(this)
+                        .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
+                        .setHandleAudioBecomingNoisy(true),
+                )
                 .also {
                     it.addListener(listener)
                     playerView.player = it

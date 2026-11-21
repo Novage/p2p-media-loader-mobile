@@ -116,6 +116,7 @@ test("the event after start finds the core", () =>
     assertEquals(answer.kind, "segment", "the answer");
     assertEquals(hex(answer.data), "01 02 03", "the bytes");
     assertEquals(typeof answer.bandwidth, "number", "the bandwidth");
+    assertEquals(answer.main, true, "the stream type");
     assertEquals(answersOf(2).length, 1, "one answer");
   }));
 
@@ -211,6 +212,40 @@ test("a failure gives the type and the message of the core's error", () =>
           "fail failed a detail",
           "the error",
         );
+      },
+    );
+  }));
+
+test("playback gives the core its playback state, as numbers", () =>
+  inOrder(async () => {
+    const states = [];
+    await withCoreMethod(
+      "updatePlayback",
+      (state) => states.push(state),
+      async () => {
+        fakePlayer.send("playback", 0, "12.5", "0");
+        await tasksRun();
+      },
+    );
+    assertEquals(JSON.stringify(states), '[{"bufferAhead":12.5,"rate":0}]');
+  }));
+
+test("a segment of a secondary stream says so", () =>
+  inOrder(async () => {
+    await withCoreMethod(
+      "loadSegment",
+      () =>
+        Promise.resolve({
+          data: new ArrayBuffer(1),
+          bandwidth: 5,
+          streamType: "secondary",
+        }),
+      async () => {
+        fakePlayer.send("load", 22, BASE + "seg0.m4s");
+        const answer = await answerTo(22);
+        assertEquals(answer.kind, "segment", "the answer");
+        assertEquals(answer.bandwidth, 5, "the bandwidth");
+        assertEquals(answer.main, false, "the stream type");
       },
     );
   }));

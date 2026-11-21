@@ -203,6 +203,30 @@ class DataSourcesDeviceTest {
     }
 
     @Test
+    fun theEngineMeterGetsTheCoreBandwidthInPlaceOfTheTransfer() {
+        giveManifests()
+        val inner = FixedMeter()
+        val meter = CoreBandwidthMeter(inner)
+        val transfers = TransferCounter()
+        val source = factory.createDataSource(C.DATA_TYPE_MEDIA)
+        source.addTransferListener(meter.transferListener)
+        source.addTransferListener(transfers)
+        try {
+            source.open(DataSpec(Uri.parse(url("/hls/seg0.ts"))))
+            DataSourceUtil.readToEnd(source)
+        } finally {
+            source.close()
+        }
+        assertEquals(listOf(1, 1, SEGMENT_BYTES, 1), transfers.counts(), "a plain listener")
+        assertTrue(inner.ends.isEmpty(), "the inner meter did not time it")
+        val estimate = meter.bitrateEstimate
+        assertTrue(
+            estimate > 0 && estimate != FixedMeter.BITRATE,
+            "the core's bandwidth: $estimate",
+        )
+    }
+
+    @Test
     fun aByteRangeSegmentReachesTheCoreWithItsRange() {
         giveManifests()
         val spec = DataSpec(Uri.parse(url("/hls/range.ts")), 0, RANGE_BYTES.toLong())

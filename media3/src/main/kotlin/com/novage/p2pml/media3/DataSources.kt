@@ -91,7 +91,8 @@ internal class ManifestDataSource(private val core: Core, private val upstream: 
  * Loads a segment through the core when the core knows it, and else through [upstream], as the web
  * adapters' segment loaders.
  *
- * The bandwidth meter sees a segment from the core from the start of the core's wait. Not
+ * The engine's bandwidth meter gets the core's bandwidth for a segment from the core. Other
+ * listeners see the transfer from the start of the core's wait. Not
  * [androidx.media3.datasource.BaseDataSource]: its listeners cannot reach [upstream], which reports
  * its own transfers.
  */
@@ -99,13 +100,20 @@ internal class ManifestDataSource(private val core: Core, private val upstream: 
 internal class SegmentDataSource(private val core: Core, private val upstream: DataSource) :
     DataSource {
     private val listeners = mutableListOf<TransferListener>()
+    // The meter's listeners, which take the core's bandwidth for its segments in place of the
+    // clock.
+    private val meters = mutableListOf<CoreBandwidthMeter.CoreTransferListener>()
     // The open request when it goes through the core.
     private var coreSpec: DataSpec? = null
     private var data: ByteArrayInputStream? = null
     private var upstreamOpen = false
 
     override fun addTransferListener(transferListener: TransferListener) {
-        listeners += transferListener
+        if (transferListener is CoreBandwidthMeter.CoreTransferListener) {
+            meters += transferListener
+        } else {
+            listeners += transferListener
+        }
         upstream.addTransferListener(transferListener)
     }
 
@@ -139,7 +147,9 @@ internal class SegmentDataSource(private val core: Core, private val upstream: D
         for (listener in listeners) listener.onTransferInitializing(this, dataSpec, IS_NETWORK)
         for (listener in listeners) listener.onTransferStart(this, dataSpec, IS_NETWORK)
         return try {
-            core.loadSegment(url, range).data
+            val response = core.loadSegment(url, range)
+            for (meter in meters) meter.onCoreSegment(response.bandwidth, response.streamType)
+            response.data
         } catch (_: CoreRequestError) {
             endCoreTransfer()
             null

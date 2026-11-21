@@ -47,13 +47,15 @@ that describes the behaviour, not here.
   request itself and plays without P2P (specs/api.md).
 - **The API is not complete.** `Core` does not have these calls of the JS
   core: the events (`addEventListener`, `removeEventListener`),
-  `applyDynamicConfig`, `updatePlayback`, `setManifestResponseUrl`,
+  `applyDynamicConfig`, `setManifestResponseUrl`,
   `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
   (`isSegmentIndex`, `processSegmentIndex`), and `Media3P2PEngine` has the
-  same gaps. There is no `:proxy` module (specs/api.md). With no playback
-  state, the core sees an empty buffer:
-  every request is urgent and goes over HTTP, so a player gets no segment
-  from peers.
+  same gaps. There is no `:proxy` module (specs/api.md).
+- **The Media3 engine does not place a live player.** The web adapters place
+  a live player deep in the live window (the core's `liveDelayFor`) and size
+  its forward buffer from it (`playerBufferFor`). Media3 plays about three
+  target durations behind the live edge, so its buffer ahead stays near the
+  core's urgent threshold, and many requests are urgent and go over HTTP.
 - **Media3 plays one item at a time through the engine.** Each source of
   `Media3P2PEngine` readies the core for itself when the player prepares it
   (specs/api.md, "Media3"). ExoPlayer prepares the next item of a playlist
@@ -70,28 +72,11 @@ that describes the behaviour, not here.
   browser. A cached segment loads again, and a segment from the core does
   not go into the cache. A segment that needs the signer or the headers
   fails in the core, after its retries, and then loads through `upstream`.
-- **A player that stops keeps the core in its swarm.** `player.stop()`
-  releases the sources as an error does, and a source cannot tell the two
-  apart, so its release keeps the core for a recovery (specs/api.md,
-  "Media3"). Until `close()` or the next source, the core keeps its peers
-  and its tracker, and uploads to peers. A fix resets the core when the
-  player becomes idle without an error; it needs the engine to watch the
-  player, which comes with the playback state.
 - **`Media3P2PEngine` makes HLS sources only.** Its factory takes the place
   of `DefaultMediaSourceFactory`: a DASH, SmoothStreaming or progressive
   item fails, and the factory does not add what `DefaultMediaSourceFactory`
   adds to an item, such as side-loaded subtitles, clipping and ads. DASH is
   in the scope (specs/scope.md) and not done.
-- **Media3's bandwidth meter can overestimate a segment from the core.** The
-  meter times a transfer by the clock. A segment that the core already
-  holds, from a peer or a prefetch, comes at once and reads as very fast, so
-  Media3's adaptive bitrate can switch up to a quality that the network
-  cannot carry. The web adapters give their players the core's `bandwidth`
-  instead. A segment that the core fails, before it loads through
-  `upstream`, is a transfer of no bytes: when it is the meter's first one,
-  the meter's estimate is 0 until the next transfer. A fix gives the engine
-  a bandwidth meter that uses the core's `bandwidth`; it comes with the
-  playback state, which makes segments from peers common.
 - **A released Media3 source's playlist can reach the next source's core.**
   When the app gives the player a new item, Media3 prepares the new source,
   which readies the core, before it releases the old one. A playlist of the
@@ -100,6 +85,21 @@ that describes the behaviour, not here.
   plays without P2P for that session. The engine drops a playlist whose load
   Media3 cancelled, but not one that ends before the release. A fix ties
   each data source to its own source.
+- **A stop can leave the core in its swarm.** `stop()` after an error keeps
+  the core, because the error stays set. The engine readies the core on the
+  application thread when the player stops, and the playback thread releases
+  the source after it: a live playlist that arrives in that time, and then a
+  segment request of the same source, bring the core back into the swarm
+  until the next source or `close()`.
+- **The bandwidth estimate can stay at an old value.** After the core gives
+  one bandwidth, the meter keeps its last value: when every later load fails
+  in the core and goes to `upstream`, the estimate does not follow the
+  network.
+- **A playback report can come after the next request.** The Media3 engine
+  reports the buffer after each chunk on the player's application thread,
+  and the player can ask for the next segment first, on its loading thread.
+  Near the core's urgent threshold, the core then reads that request as
+  urgent and loads it over HTTP.
 - **Media3's segment URLs and the core's keys can differ.** The core
   resolves a playlist's URIs with the WHATWG URL parser, which lowercases
   the host, drops a default port and percent-encodes spaces and non-ASCII

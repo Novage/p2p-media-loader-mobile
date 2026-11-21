@@ -55,7 +55,7 @@ static JSValue player_listen(JSContext *context, JSValueConst this_value, int ar
   return JS_UNDEFINED;
 }
 
-// playerValue(id, json), playerData(id, Uint8Array, bandwidth) and
+// playerValue(id, json), playerData(id, Uint8Array, bandwidth, main) and
 // playerFail(id, type, message): the answer to call `id`.
 static JSValue player_answer(JSContext *context, JSValueConst this_value, int argc,
                              JSValueConst *argv, int kind) {
@@ -73,6 +73,10 @@ static JSValue player_answer(JSContext *context, JSValueConst this_value, int ar
     if (JS_ToFloat64(context, &bandwidth, argv[2]) < 0) {
       return JS_EXCEPTION;
     }
+    int main = JS_ToBool(context, argv[3]);
+    if (main < 0) {
+      return JS_EXCEPTION;
+    }
     JSValue buffer = JS_GetTypedArrayBuffer(context, argv[1], &offset, &length, NULL);
     if (JS_IsException(buffer)) {
       return buffer;
@@ -83,7 +87,7 @@ static JSValue player_answer(JSContext *context, JSValueConst this_value, int ar
     if (bytes == NULL) {
       return JS_EXCEPTION;
     }
-    client->segment(client->data, id, bytes + offset, length, bandwidth);
+    client->segment(client->data, id, bytes + offset, length, bandwidth, main != 0);
     return JS_UNDEFINED;
   }
   size_t length = 0;
@@ -112,7 +116,7 @@ static JSValue player_answer(JSContext *context, JSValueConst this_value, int ar
 static const JSCFunctionListEntry player_functions[] = {
     JS_CFUNC_DEF("playerListen", 1, player_listen),
     JS_CFUNC_MAGIC_DEF("playerValue", 2, player_answer, 0),
-    JS_CFUNC_MAGIC_DEF("playerData", 3, player_answer, 1),
+    JS_CFUNC_MAGIC_DEF("playerData", 4, player_answer, 1),
     JS_CFUNC_MAGIC_DEF("playerFail", 3, player_answer, 2),
 };
 

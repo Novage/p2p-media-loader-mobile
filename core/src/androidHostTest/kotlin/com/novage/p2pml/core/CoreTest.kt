@@ -34,7 +34,8 @@ class CoreTest {
                 object : Dispatcher() {
                     override fun dispatch(request: RecordedRequest): MockResponse =
                         when (request.url.encodedPath) {
-                            "/seg0.ts" ->
+                            "/seg0.ts",
+                            "/audio0.ts" ->
                                 MockResponse.Builder().body(Buffer().write(segment)).build()
                             "/seg1.ts" -> MockResponse.Builder().code(SERVER_ERROR).build()
                             // Longer than any test waits.
@@ -112,6 +113,25 @@ class CoreTest {
         val response = core.loadSegment(url("/seg0.ts"))
         assertContentEquals(segment, response.data)
         assertTrue(response.bandwidth > 0, "bandwidth ${response.bandwidth}")
+        assertEquals(StreamType.MAIN, response.streamType)
+    }
+
+    @Test
+    fun aSegmentOfAnAudioRenditionIsOfASecondaryStream() {
+        core.processManifest(url("/master.m3u8"), data = MASTER_WITH_AUDIO)
+        core.processManifest(url("/media.m3u8"), data = MEDIA)
+        core.processManifest(url("/audio.m3u8"), data = AUDIO)
+        val response = core.loadSegment(url("/audio0.ts"))
+        assertContentEquals(segment, response.data)
+        assertEquals(StreamType.SECONDARY, response.streamType)
+    }
+
+    // A JS error in the event would be an engine line, which stop() rejects.
+    @Test
+    fun aPlaybackStateReachesTheCore() {
+        giveManifests()
+        core.updatePlayback(PlaybackState(BUFFER_AHEAD, 1.0))
+        assertContentEquals(segment, core.loadSegment(url("/seg0.ts")).data)
     }
 
     @Test
@@ -211,6 +231,7 @@ class CoreTest {
     fun afterCloseNothingIsLoadable() {
         giveManifests()
         core.close()
+        core.updatePlayback(PlaybackState(1.0, 1.0))
         assertFalse(core.isSegmentLoadable(url("/seg0.ts")))
         assertIs<CoreRequestError>(loadInBackground("/seg0.ts").second.failure())
         // The given settings, in getConfig's shape.
@@ -226,6 +247,7 @@ class CoreTest {
             }
         val fallback = Core(config) { throw UnsatisfiedLinkError("no libp2pml") }
         giveManifests(fallback)
+        fallback.updatePlayback(PlaybackState(1.0, 1.0))
         assertFalse(fallback.isSegmentLoadable(url("/seg0.ts")))
         assertFailsWith<CoreRequestError> { fallback.loadSegment(url("/seg0.ts")) }
         // The given settings, in getConfig's shape: a stream type's own over the ones for both.
@@ -258,10 +280,18 @@ class CoreTest {
         const val DEFAULT_HTTP_TRIES = 3
         const val SWARM_ID = "a\"b"
         const val MEMORY_MIB = 64.0
+        const val BUFFER_AHEAD = 30.0
         // The range of range.ts in MEDIA, and another one.
         val RANGE = ByteRange(0, 999)
         val OTHER_RANGE = ByteRange(0, 499)
         const val MASTER = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\nmedia.m3u8\n"
+        const val MASTER_WITH_AUDIO =
+            "#EXTM3U\n" +
+                "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"en\",DEFAULT=YES,URI=\"audio.m3u8\"\n" +
+                "#EXT-X-STREAM-INF:BANDWIDTH=1280000,AUDIO=\"a\"\nmedia.m3u8\n"
+        const val AUDIO =
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n" +
+                "#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:4.0,\naudio0.ts\n#EXT-X-ENDLIST\n"
         const val MEDIA =
             "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n" +
                 "#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n" +
