@@ -467,7 +467,7 @@ not resolve to `p2p-media-loader-core` fails with a `ReferenceError`.
 
 - **The version** is the one that `native/package.json` pins, exactly;
   `native/package-lock.json` pins the tarball's sha512. It is the
-  pre-release `5.0.0-alpha.8`, of the peer protocol `v3` of 5.0.0. The web
+  pre-release `5.0.0-alpha.9`, of the peer protocol `v3` of 5.0.0. The web
   peers it meets must run a core with the same stream identity.
 - **The build:** npm installs the package (`./gradlew :native:npmCi`, which
   the native build tasks depend on), and `native/CMakeLists.txt` builds the
