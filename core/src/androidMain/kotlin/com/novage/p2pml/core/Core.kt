@@ -85,7 +85,7 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
      */
     @Throws(InterruptedIOException::class)
     public fun getConfig(): CoreConfig {
-        val json = session.query("config")?.takeIf { it != "null" }
+        val json = session.query("config")
         return CoreConfig().readFrom(json?.let(::JSONObject) ?: JSONObject(config).inConfigShape())
     }
 
@@ -94,10 +94,21 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
      * when a redirect changed it, and its text. From Java, [requestedUrl] is null when there was no
      * redirect: the call has no Java overload, which would be (url, data) and read as (url,
      * requestedUrl).
+     *
+     * @return what the core made of it, with the placement of a live player, as the JS core's
+     *   `processManifest` and `liveDelayFor`; null when the core did not take it, with no core, and
+     *   after [close].
+     * @throws InterruptedIOException when the waiting thread is interrupted.
      */
-    public fun processManifest(url: String, requestedUrl: String? = null, data: String) {
-        session.send("manifest", listOf(url, requestedUrl, data))
-    }
+    @Throws(InterruptedIOException::class)
+    public fun processManifest(
+        url: String,
+        requestedUrl: String? = null,
+        data: String,
+    ): ProcessedManifest? =
+        session.query("manifest", listOf(url, requestedUrl, data))?.let {
+            JSONObject(it).toProcessedManifest()
+        }
 
     /**
      * Whether the core loads segment [url], with its [byteRange] if it has one.

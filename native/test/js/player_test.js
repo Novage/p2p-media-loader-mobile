@@ -30,6 +30,17 @@ const MEDIA = [
   "",
 ].join("\n");
 
+// A live stream: 10 segments of 4 s, with no end.
+const LIVE = BASE + "live/";
+const LIVE_MEDIA = [
+  "#EXTM3U",
+  "#EXT-X-VERSION:3",
+  "#EXT-X-TARGETDURATION:4",
+  "#EXT-X-MEDIA-SEQUENCE:100",
+  ...Array.from({ length: 10 }, (_, i) => `#EXTINF:4.0,\nseg${100 + i}.ts`),
+  "",
+].join("\n");
+
 // The bridge has one core: the tests run one after another.
 let previous = Promise.resolve();
 const inOrder = (body) => {
@@ -100,6 +111,13 @@ test("before start, nothing is loadable and a load fails", () =>
   inOrder(async () => {
     assertEquals(await query("loadable", BASE + "seg0.m4s"), false, "loadable");
     assertEquals(await query("config"), null, "config");
+    const manifest = await query(
+      "manifest",
+      BASE + "media.m3u8",
+      undefined,
+      MEDIA,
+    );
+    assertEquals(manifest, null, "manifest");
     fakePlayer.send("load", 1, BASE + "seg0.m4s");
     assertEquals((await answerTo(1)).kind, "fail", "load");
   }));
@@ -304,4 +322,40 @@ test("destroy aborts the open loads, and the core takes a new source", () =>
     assertEquals(await query("loadable", segment), false, "no source");
     giveManifests();
     assertEquals(await query("loadable", segment), true, "a new source");
+  }));
+
+test("a manifest gives the core's streams, and a live one its placement", () =>
+  inOrder(async () => {
+    const vod = await query("manifest", BASE + "media.m3u8", undefined, MEDIA);
+    assertEquals(vod.streams.length, 1, "a media playlist: one stream");
+    assertEquals(vod.streams[0].type, "main", "its type");
+    assertEquals(vod.streams[0].isLive, false, "VOD");
+    assertEquals(vod.liveDelay, null, "no placement for VOD");
+    assertEquals(
+      await query("manifest", BASE + "x.m3u8", undefined, "not a playlist"),
+      null,
+    );
+    fakePlayer.send("destroy", 0);
+    const master = await query(
+      "manifest",
+      LIVE + "master.m3u8",
+      undefined,
+      MASTER,
+    );
+    assertEquals(JSON.stringify(master), '{"streams":[],"liveDelay":null}');
+    const live = await query(
+      "manifest",
+      LIVE + "media.m3u8",
+      undefined,
+      LIVE_MEDIA,
+    );
+    assertEquals(live.streams[0].isLive, true, "live");
+    assertEquals(live.streams[0].segmentCount, 10, "its segments");
+    // The core's rules: as deep as the window allows, a segment inside its
+    // tail; the buffer a segment short of that; two segments of slack.
+    assertEquals(
+      JSON.stringify(live.liveDelay),
+      '{"delay":36,"segment":4,"playerBuffer":32,"maxLiveLatency":44}',
+    );
+    fakePlayer.send("destroy", 0);
   }));

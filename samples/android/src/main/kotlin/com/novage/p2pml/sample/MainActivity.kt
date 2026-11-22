@@ -34,16 +34,9 @@ class MainActivity : Activity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // The engine starts a live player that fell out of the window
+                // again (BEHIND_LIVE_WINDOW).
                 Log.w(TAG, "playback error: ${error.errorCodeName}", error)
-                // A pause longer than the live window leaves the position outside
-                // it. Media3 then fails with BEHIND_LIVE_WINDOW; start again at
-                // the live position, as its documentation recommends.
-                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-                    player?.run {
-                        seekToDefaultPosition()
-                        prepare()
-                    }
-                }
             }
         }
 

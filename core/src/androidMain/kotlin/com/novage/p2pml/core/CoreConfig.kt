@@ -173,7 +173,7 @@ internal fun JSONObject.inConfigShape(): JSONObject {
 }
 
 // A field's value; null when it is absent or JSON null.
-private fun JSONObject.value(name: String): Any? = opt(name)?.takeIf { it != JSONObject.NULL }
+internal fun JSONObject.value(name: String): Any? = opt(name)?.takeIf { it != JSONObject.NULL }
 
 private fun JSONArray.strings() = List(length()) { getString(it) }
 

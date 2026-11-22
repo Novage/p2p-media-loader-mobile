@@ -126,6 +126,45 @@ class CoreTest {
         assertEquals(StreamType.SECONDARY, response.streamType)
     }
 
+    @Test
+    fun aManifestGivesItsStreamsAndALiveOneItsPlacement() {
+        assertEquals(
+            ProcessedManifest(emptyList(), null),
+            core.processManifest(url("/master.m3u8"), data = MASTER),
+            "a master playlist lists no segments",
+        )
+        val vod = assertNotNull(core.processManifest(url("/media.m3u8"), data = MEDIA))
+        assertEquals(null, vod.liveDelay, "no placement for VOD")
+        val stream = vod.streams.single()
+        assertEquals(url("/media.m3u8"), stream.key)
+        assertEquals(StreamType.MAIN, stream.type)
+        assertEquals(false, stream.isLive)
+        assertEquals(VOD_SEGMENTS, stream.segmentCount)
+        core.destroy()
+        core.processManifest(url("/live/master.m3u8"), data = MASTER)
+        val live = assertNotNull(core.processManifest(url("/live/media.m3u8"), data = LIVE))
+        assertEquals(true, live.streams.single().isLive)
+        assertEquals(LIVE_SPAN, live.streams.single().let { it.end - it.start }, "its bounds")
+        // The core's rules for 10 segments of 4 s.
+        assertEquals(LIVE_PLACEMENT, live.liveDelay)
+    }
+
+    // A valid date that the engine's Date cannot read gives the stream bounds as NaN: they cost the
+    // placement, not the manifest.
+    @Test
+    fun aManifestWithBoundsThatAreNotNumbersStillComesBack() {
+        core.processManifest(url("/master.m3u8"), data = MASTER)
+        val live =
+            LIVE.replace("#EXT-X-MEDIA-SEQUENCE:100\n", "#EXT-X-MEDIA-SEQUENCE:100\n$DATE_PLUS_01")
+        val manifest = assertNotNull(core.processManifest(url("/media.m3u8"), data = live))
+        assertEquals(null, manifest.liveDelay, "no placement")
+        val stream = manifest.streams.single()
+        assertTrue(
+            stream.start.isNaN() && stream.end.isNaN(),
+            "bounds ${stream.start} ${stream.end}",
+        )
+    }
+
     // A JS error in the event would be an engine line, which stop() rejects.
     @Test
     fun aPlaybackStateReachesTheCore() {
@@ -232,6 +271,7 @@ class CoreTest {
         giveManifests()
         core.close()
         core.updatePlayback(PlaybackState(1.0, 1.0))
+        assertEquals(null, core.processManifest(url("/media.m3u8"), data = MEDIA))
         assertFalse(core.isSegmentLoadable(url("/seg0.ts")))
         assertIs<CoreRequestError>(loadInBackground("/seg0.ts").second.failure())
         // The given settings, in getConfig's shape.
@@ -248,6 +288,7 @@ class CoreTest {
         val fallback = Core(config) { throw UnsatisfiedLinkError("no libp2pml") }
         giveManifests(fallback)
         fallback.updatePlayback(PlaybackState(1.0, 1.0))
+        assertEquals(null, fallback.processManifest(url("/media.m3u8"), data = MEDIA))
         assertFalse(fallback.isSegmentLoadable(url("/seg0.ts")))
         assertFailsWith<CoreRequestError> { fallback.loadSegment(url("/seg0.ts")) }
         // The given settings, in getConfig's shape: a stream type's own over the ones for both.
@@ -285,6 +326,13 @@ class CoreTest {
         val RANGE = ByteRange(0, 999)
         val OTHER_RANGE = ByteRange(0, 499)
         const val MASTER = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\nmedia.m3u8\n"
+        const val VOD_SEGMENTS = 4
+        val LIVE_PLACEMENT = LiveDelay(36.0, 4.0, 32.0, 44.0)
+        const val LIVE_SPAN = 40.0
+        const val DATE_PLUS_01 = "#EXT-X-PROGRAM-DATE-TIME:2024-01-01T00:00:00.000+01\n"
+        val LIVE =
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:100\n" +
+                (0 until 10).joinToString("") { "#EXTINF:4.0,\nseg${100 + it}.ts\n" }
         const val MASTER_WITH_AUDIO =
             "#EXTM3U\n" +
                 "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"en\",DEFAULT=YES,URI=\"audio.m3u8\"\n" +

@@ -404,11 +404,13 @@ playback state.
     object `config` as its settings and the HLS parser. QuickJS loads the
     module in the Promise jobs of this event's task, which run before the
     next task: the next event finds the core.
-  - `manifest(url, requestedUrl, data)` is `processManifest`, with the URL
-    after redirects and the one asked for, as the HLS.js adapter gives them.
-    The core ignores a manifest that it cannot parse (only its debug log
-    shows it), which costs P2P only; an exception from `processManifest` is
-    reported.
+  - `manifest(id, url, requestedUrl, data)` is `processManifest`, with the
+    URL after redirects and the one asked for, as the HLS.js adapter gives
+    them: a query, answered at once with the core's result and the
+    placement of `liveDelayFor`, `playerBufferFor` and `maxLiveLatencyFor`
+    (specs/api.md), or `null`. The core ignores a manifest that it cannot
+    parse (only its debug log shows it), which costs P2P only; an exception
+    from `processManifest` is reported, and the answer is `null`.
   - `loadable(id, url, range)` and `config(id)` are `isSegmentLoadable` and
     `getConfig`: queries, answered at once.
   - `load(id, url, range)` is `loadSegment`: as in JS, a URL that the core
@@ -420,8 +422,8 @@ playback state.
 - **The answers,** from JS to Kotlin, one for each query and each load,
   through the natives and the client of `p2pml_engine_run` (`PlayerSink` in
   Kotlin):
-  - `playerValue(id, json)`: a query's value; with no core, `false` and
-    `null`;
+  - `playerValue(id, json)`: a query's value; with no core, `null` for a
+    manifest, `false` and `null`;
   - `playerData(id, bytes, bandwidth, main)`: the whole segment, copied once
     from its `ArrayBuffer` into a Kotlin `ByteArray` (`loadSegment` gives the
     segment at its end, not in parts), the bandwidth the core measured, and

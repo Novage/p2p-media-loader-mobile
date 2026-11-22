@@ -3,9 +3,11 @@ package com.novage.p2pml.media3
 import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -20,7 +22,11 @@ import androidx.media3.extractor.text.SubtitleParser
 import com.google.common.base.Supplier
 import com.novage.p2pml.core.Core
 import com.novage.p2pml.core.CoreConfig
+import com.novage.p2pml.core.LiveDelay
 import com.novage.p2pml.core.PlaybackState
+import com.novage.p2pml.core.ProcessedManifest
+import com.novage.p2pml.core.ProcessedStream
+import com.novage.p2pml.core.StreamType
 import java.io.InterruptedIOException
 
 /** The settings of a [Media3P2PEngine], as the web library's `HlsJsP2PEngineConfig`. */
@@ -55,6 +61,11 @@ internal constructor(
     // sources on its playback thread; a stop forgets it on the player's thread.
     @Volatile private var coreSource: MediaSource? = null
     @Volatile private var watch: PlayerWatch? = null
+    // Where the core places a live player of the current source (its last live main playlist), or
+    // null. Set on a loading thread, read on the playback and the application threads.
+    @Volatile
+    internal var placement: LiveDelay? = null
+        private set
 
     /**
      * The settings that the engine uses, as `HlsJsP2PEngine.getConfig()`: the core's, with its
@@ -67,11 +78,17 @@ internal constructor(
 
     /**
      * Builds the player that plays through the core, as the web library's `HlsJsP2PEngine` with
-     * HLS.js. On [builder], it sets the media source factory, of HLS sources, and the bandwidth
-     * meter, which takes the core's bandwidth for the core's segments; settings of these two on
-     * [builder] do not stay. Then it watches the player for the core: its playback state, and a
-     * stop, which takes the core out of its swarm. [upstream] loads what the core does not: the
-     * playlists, the segments that the core does not know, keys and every other request.
+     * HLS.js. On [builder], it sets the media source factory, of HLS sources placed in a live
+     * window by the core, the bandwidth meter, which takes the core's bandwidth for the core's
+     * segments, and the load control, which holds a live player's forward buffer to the core's
+     * rule; settings of these three on [builder] do not stay. Then it watches the player for the
+     * core: its playback state, a stop, which takes the core out of its swarm, and a live player
+     * that falls too far behind, which it moves back to its place. A live player that fails with
+     * `ERROR_CODE_BEHIND_LIVE_WINDOW` starts again at its default position, its place when the core
+     * placed it (`seekToDefaultPosition` and `prepare`), as Media3 recommends: the app's listeners
+     * still get the error, and the app needs no recovery of its own. [upstream] loads what the core
+     * does not: the playlists, the segments that the core does not know, keys and every other
+     * request.
      *
      * Call it on the thread that uses the player, once: the engine serves one player.
      *
@@ -90,8 +107,9 @@ internal constructor(
             builder
                 .setMediaSourceFactory(mediaSourceFactory(upstream))
                 .setBandwidthMeter(meter)
+                .setLoadControl(CoreLoadControl(DefaultLoadControl()) { placement })
                 .build()
-        val watch = PlayerWatch(player, onPlayback, ::destroy)
+        val watch = PlayerWatch(player, onPlayback, ::destroy) { placement }
         // Set after the start, which throws on a thread that is not the player's.
         watch.start()
         this.watch = watch
@@ -101,7 +119,21 @@ internal constructor(
     /** The media sources that play through the core. */
     @OptIn(UnstableApi::class)
     internal fun mediaSourceFactory(upstream: DataSource.Factory): MediaSource.Factory =
-        CoreSourceFactory(HlsMediaSource.Factory(P2pHlsDataSourceFactory(core, upstream)))
+        CoreSourceFactory(
+            HlsMediaSource.Factory(P2pHlsDataSourceFactory(core, upstream, ::onManifest))
+        )
+
+    // A live main playlist places the player, as the web adapters place theirs from the main
+    // stream; a main playlist that is not live, such as one that ended, does not. One that the core
+    // gives no placement for keeps the last: one with no segments, or one whose times the core
+    // cannot read (KNOWN-ISSUES.md). An audio playlist is of a secondary stream, and a master
+    // playlist lists none.
+    internal fun onManifest(manifest: ProcessedManifest) {
+        val main = manifest.streams.filter { it.type == StreamType.MAIN }
+        if (main.isEmpty()) return
+        if (main.none(ProcessedStream::isLive)) placement = null
+        else manifest.liveDelay?.let { placement = it }
+    }
 
     /**
      * Readies the core for the next source, as `HlsJsP2PEngine.destroy()`: its streams, segments
@@ -110,6 +142,7 @@ internal constructor(
      */
     public fun destroy() {
         coreSource = null
+        placement = null
         core.destroy()
     }
 
@@ -172,9 +205,26 @@ internal constructor(
         override fun prepareSourceInternal() {
             if (coreSource !== this) {
                 coreSource = this
+                placement = null
                 core.destroy()
             }
             super.prepareSourceInternal()
+        }
+
+        // The source that the core serves takes its placement with it when Media3 releases it, as
+        // when the app plays a source of its own. Media3 releases this source before or after it
+        // prepares the next source of the engine; either way the next one starts with no
+        // placement. After an error or a stop, Media3 prepares this source again, and its first
+        // live main playlist with segments places it again before Media3 builds its timeline; a
+        // first playlist with no segments leaves Media3's placement until one has segments.
+        override fun releaseSourceInternal() {
+            if (coreSource === this) placement = null
+            super.releaseSourceInternal()
+        }
+
+        // The core places each timeline of a live main playlist.
+        override fun onChildSourceInfoRefreshed(newTimeline: Timeline) {
+            refreshSourceInfo(placement?.let { PlacedTimeline(newTimeline, it) } ?: newTimeline)
         }
     }
 }

@@ -4,9 +4,12 @@
 // (natives.playerListen, native/src/player.c); `range` is "start-end",
 // inclusive, or undefined:
 // - start(0, config): makes the core, with `config` (JSON) as its settings;
-// - manifest(0, url, requestedUrl, data): processManifest;
-// - loadable(id, url, range) and config(id): isSegmentLoadable and
-//   getConfig, answered at once with natives.playerValue(id, json);
+// - manifest(id, url, requestedUrl, data), loadable(id, url, range) and
+//   config(id): processManifest, isSegmentLoadable and getConfig, answered at
+//   once with natives.playerValue(id, json). The answer of manifest is null,
+//   or the processed streams with liveDelay: where the core's liveDelayFor
+//   places a live player, with playerBufferFor and maxLiveLatencyFor of that
+//   placement, or null;
 // - load(id, url, range): loadSegment, answered once, later, with
 //   playerData(id, bytes, bandwidth, main) or playerFail(id, type, message);
 // - abort(0, url, range): abortSegmentLoading;
@@ -20,8 +23,9 @@
   const { JSON, Number, String, Uint8Array } = globalThis;
   const { toString } = Object.prototype;
 
-  // The core: undefined before start.
+  // The core, and its placement rules: undefined before start.
   let core;
+  let rules;
   // The loads that have no answer yet, by id.
   const loads = new Set();
 
@@ -70,34 +74,61 @@
       // QuickJS loads the module in this task's Promise jobs, which run
       // before the next task: the next event finds the core.
       import("p2p-media-loader-core")
-        .then(({ Core, hlsManifestParser, debug }) => {
-          // The console does no substitution: the value goes in place of
-          // its directive, as a browser's console would show it.
-          // A value that cannot be converted (no prototype) still logs.
-          for (const directive of ["O", "o", "s", "d"]) {
-            debug.formatters[directive] = (value) => {
-              try {
-                return String(value);
-              } catch {
-                return toString.call(value);
-              }
-            };
-          }
-          core = new Core({
-            ...JSON.parse(config),
-            manifestParsers: [hlsManifestParser],
-          });
-        })
+        .then(
+          ({
+            Core,
+            hlsManifestParser,
+            debug,
+            liveDelayFor,
+            playerBufferFor,
+            maxLiveLatencyFor,
+          }) => {
+            // The console does no substitution: the value goes in place of
+            // its directive, as a browser's console would show it.
+            // A value that cannot be converted (no prototype) still logs.
+            for (const directive of ["O", "o", "s", "d"]) {
+              debug.formatters[directive] = (value) => {
+                try {
+                  return String(value);
+                } catch {
+                  return toString.call(value);
+                }
+              };
+            }
+            core = new Core({
+              ...JSON.parse(config),
+              manifestParsers: [hlsManifestParser],
+            });
+            rules = { liveDelayFor, playerBufferFor, maxLiveLatencyFor };
+          },
+        )
         .catch(reportError);
     },
 
     manifest(id, url, requestedUrl, data) {
+      let answer = null;
       try {
-        core?.processManifest({ url, requestedUrl, data });
+        const processed = core?.processManifest({ url, requestedUrl, data });
+        if (processed !== undefined) {
+          const target = rules.liveDelayFor(processed);
+          answer = {
+            streams: processed.streams,
+            liveDelay:
+              target === undefined
+                ? null
+                : {
+                    delay: target.delay,
+                    segment: target.segment,
+                    playerBuffer: rules.playerBufferFor(target),
+                    maxLiveLatency: rules.maxLiveLatencyFor(target),
+                  },
+          };
+        }
       } catch (error) {
         // A manifest that the core cannot read costs P2P, not playback.
         reportError(error);
       }
+      playerValue(id, JSON.stringify(answer));
     },
 
     loadable(id, url, range) {

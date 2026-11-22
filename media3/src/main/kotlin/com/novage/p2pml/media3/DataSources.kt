@@ -12,21 +12,25 @@ import androidx.media3.exoplayer.hls.HlsDataSourceFactory
 import com.novage.p2pml.core.ByteRange
 import com.novage.p2pml.core.Core
 import com.novage.p2pml.core.CoreRequestError
+import com.novage.p2pml.core.ProcessedManifest
 import java.io.ByteArrayInputStream
 
 /**
  * The data sources of HLS: the playlists go through [ManifestDataSource], the segments through
  * [SegmentDataSource], and every other request to [upstream] untouched (a whitelist, as the web
- * adapters'), such as keys and steering manifests.
+ * adapters'), such as keys and steering manifests. [onManifest] gets what the core made of each
+ * playlist.
  */
 @OptIn(UnstableApi::class)
 internal class P2pHlsDataSourceFactory(
     private val core: Core,
     private val upstream: DataSource.Factory,
+    private val onManifest: (ProcessedManifest) -> Unit = {},
 ) : HlsDataSourceFactory {
     override fun createDataSource(dataType: Int): DataSource =
         when (dataType) {
-            C.DATA_TYPE_MANIFEST -> ManifestDataSource(core, upstream.createDataSource())
+            C.DATA_TYPE_MANIFEST ->
+                ManifestDataSource(core, upstream.createDataSource(), onManifest)
             C.DATA_TYPE_MEDIA -> SegmentDataSource(core, upstream.createDataSource())
             else -> upstream.createDataSource()
         }
@@ -35,11 +39,15 @@ internal class P2pHlsDataSourceFactory(
 /**
  * Loads a playlist through [upstream] and gives it to the core, as HLS.js's engine does: with its
  * URL after redirects, which its URIs resolve against, and the URL that the player asked for.
- * Media3 reports no transfer of a playlist to its bandwidth meter, so neither does this.
+ * [onManifest] gets what the core made of it. Media3 reports no transfer of a playlist to its
+ * bandwidth meter, so neither does this.
  */
 @OptIn(UnstableApi::class)
-internal class ManifestDataSource(private val core: Core, private val upstream: DataSource) :
-    DataSource {
+internal class ManifestDataSource(
+    private val core: Core,
+    private val upstream: DataSource,
+    private val onManifest: (ProcessedManifest) -> Unit,
+) : DataSource {
     private var data: ByteArrayInputStream? = null
     private var uri: Uri? = null
     private var headers: Map<String, List<String>> = emptyMap()
@@ -68,7 +76,7 @@ internal class ManifestDataSource(private val core: Core, private val upstream: 
         // loads over HTTP only, so a local playlist (a file, an asset) is not for it.
         val forCore =
             !Thread.currentThread().isInterrupted && uri?.scheme?.lowercase() in HTTP_SCHEMES
-        if (forCore) core.processManifest(url, requestedUrl, text)
+        if (forCore) core.processManifest(url, requestedUrl, text)?.let(onManifest)
         data = ByteArrayInputStream(bytes)
         return bytes.size.toLong()
     }

@@ -75,12 +75,16 @@ HTTP.
   `AutoCloseable`: `close()` ends the engine, and every open call fails.
   `destroy()` keeps its JS meaning: it readies the core for the next source.
 - **`processManifest`** takes the manifest as a `String` only (JS also
-  takes bytes, and an optional `protocol`), and returns nothing: the JS
-  return value places a player in a live stream, which the Media3 engine
-  does not do yet (KNOWN-ISSUES.md).
+  takes bytes, and an optional `protocol`). It returns the JS
+  `ProcessedManifest` (`streams`, each a `ProcessedStream`), or null, with
+  one more value, `liveDelay`: where to place a live player, as the JS
+  core's `liveDelayFor` gives it for that manifest, with `playerBuffer` and
+  `maxLiveLatency`, the JS core's `playerBufferFor` and `maxLiveLatencyFor`
+  of that placement. JS exports these rules as functions for the adapters;
+  here the core computes them, so that its rules have one source.
 - **`manifestParsers`** is not a setting: the core has the HLS parser.
-- **Java:** `getConfig`, `isSegmentLoadable` and `loadSegment` declare their
-  exceptions (`InterruptedIOException`, and `IOException` for `loadSegment`),
+- **Java:** `getConfig`, `processManifest`, `isSegmentLoadable` and
+  `loadSegment` declare their exceptions (`InterruptedIOException`, and `IOException` for `loadSegment`),
   and the calls with defaults at the end have overloads (`@JvmOverloads`).
   `processManifest` has none: its overload would be `(url, data)`, which
   reads as `(url, requestedUrl)`; from Java, `requestedUrl` is null when there
@@ -96,8 +100,9 @@ HTTP.
 ends its core. `buildPlayer(context, builder, upstream)` is its counterpart
 of `getConfigForHlsJs()` and `bindHls()` together: one call, so that an app
 cannot set up a part of it only. On the app's `ExoPlayer.Builder` it sets the
-media source factory, of HLS sources that play through the core, and the
-bandwidth meter; then it builds the player and watches it for the core.
+media source factory, of HLS sources that play through the core, the
+bandwidth meter and the load control; then it builds the player and watches
+it for the core.
 `upstream` (default: `DefaultDataSource`) loads what the core does not. An
 engine has one player: a second call throws.
 
@@ -143,6 +148,41 @@ engine.close()
   leaves its swarm, as the HLS.js engine's core when it is destroyed. The
   next source that the player prepares readies it again. An error also
   makes the player idle; the core stays for the recovery.
+- **Live placement:** a live player plays where the core's `liveDelayFor`
+  places it, as the web adapters place theirs: as deep in the live window as
+  the window allows, so that the segments between the player and the live
+  edge are left to peers. The engine takes the placement of the main
+  stream's playlist (`ProcessedManifest.liveDelay`), and gives it to Media3
+  in the source's timeline: the window's target live offset, and its default
+  position, where the player starts, at the start of its segment. A media
+  item with a target offset of the app's own, and a playlist with
+  `EXT-X-START`, keep Media3's placement.
+- **Forward buffer:** the load control (a `DefaultLoadControl`) stops the
+  loads of a live player that the engine placed at the core's
+  `playerBufferFor`, a segment short of the delay, as the web adapters hold
+  their players' buffers. The limit is measured from the engine's delay, so
+  where the app's target offset or `EXT-X-START` keeps Media3's placement,
+  the buffer is Media3's too (the web library's
+  `specs/player-adapters.md`, "Settings an adapter writes", rule 1). On VOD,
+  and for a stream that ended, the buffer is Media3's: the core treats the
+  requests past its urgent threshold as not urgent.
+- **Re-sync:** a live player that falls more than the core's
+  `maxLiveLatencyFor` behind the live edge, or more than the window where the
+  window is wider (DVR), such as after a long pause, goes back to its
+  placement (`seekToDefaultPosition`) while it is to play, as the HLS.js
+  adapter re-syncs HLS.js. Media3 plays a plain HLS stream at speed 1, and
+  would stay behind. Where the app's target offset or `EXT-X-START` owns the
+  delay, the re-sync still applies: its threshold is never less than the
+  window, so it moves only a player that has left the window, to Media3's
+  default position, which keeps the app's offset. The check also runs at once
+  when the app plays, before the player loads from where it stopped. A live
+  player that falls out of the window, such as after a stall at its
+  placement, fails with
+  `ERROR_CODE_BEHIND_LIVE_WINDOW`; the engine then starts it again at its
+  default position (`seekToDefaultPosition` and `prepare`), as Media3's
+  documentation recommends and as HLS.js recovers from a stall, with no limit
+  on the tries, as HLS.js. The app's listeners still get the error, when the
+  player is already preparing again; the app needs no recovery of its own.
 - **Cancellation:** Media3 interrupts the thread of a load that it cancels,
   and the interrupt aborts the core's load.
 - **Errors:** a load that the core fails or aborts goes to `upstream`, which

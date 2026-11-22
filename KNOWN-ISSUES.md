@@ -51,11 +51,6 @@ that describes the behaviour, not here.
   `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
   (`isSegmentIndex`, `processSegmentIndex`), and `Media3P2PEngine` has the
   same gaps. There is no `:proxy` module (specs/api.md).
-- **The Media3 engine does not place a live player.** The web adapters place
-  a live player deep in the live window (the core's `liveDelayFor`) and size
-  its forward buffer from it (`playerBufferFor`). Media3 plays about three
-  target durations behind the live edge, so its buffer ahead stays near the
-  core's urgent threshold, and many requests are urgent and go over HTTP.
 - **Media3 plays one item at a time through the engine.** Each source of
   `Media3P2PEngine` readies the core for itself when the player prepares it
   (specs/api.md, "Media3"). ExoPlayer prepares the next item of a playlist
@@ -82,9 +77,20 @@ that describes the behaviour, not here.
   which readies the core, before it releases the old one. A playlist of the
   old source that arrives in that time reaches the core, which registers its
   streams; with no `swarmId`, it can name the swarm. The new item then
-  plays without P2P for that session. The engine drops a playlist whose load
-  Media3 cancelled, but not one that ends before the release. A fix ties
-  each data source to its own source.
+  plays without P2P for that session. A live playlist of the old source can
+  also set the engine's live placement, which then holds the new item's
+  forward buffer (specs/api.md, "Media3") until its own playlists place it
+  again, or for good when the core does not get them, such as a local
+  playlist's. The engine drops a playlist whose load Media3 cancelled, but
+  not one that ends before the release. A fix ties each data source to its
+  own source.
+- **A source of the app's own leaves the core in its swarm.** When the app
+  gives the engine's player a source that is not the engine's (DASH, a
+  progressive file) with no stop, Media3 releases the engine's source, but
+  the core keeps its streams, segments and peers until the next engine source
+  or `close()`. A `destroy()` at the release would also drop the core that a
+  recovery after an error keeps (Media3 releases and prepares the same source
+  then), so a fix must tell the two apart.
 - **A stop can leave the core in its swarm.** `stop()` after an error keeps
   the core, because the error stays set. The engine readies the core on the
   application thread when the player stops, and the playback thread releases
@@ -100,6 +106,14 @@ that describes the behaviour, not here.
   and the player can ask for the next segment first, on its loading thread.
   Near the core's urgent threshold, the core then reads that request as
   urgent and loads it over HTTP.
+- **A date that the engine cannot read breaks the core's timeline.** An
+  `EXT-X-PROGRAM-DATE-TIME` with an offset such as `+01` or `+1:00`, or a
+  lowercase `z`, is valid ISO 8601, and Media3 reads it. The `Date` of
+  QuickJS (and of V8, in the web library) gives NaN for it, so the core lays
+  out the stream's segments at NaN times: `processManifest` gives NaN bounds
+  and no live placement, every segment is in the core's download windows, and
+  its storage evicts what it holds. Playback goes on; P2P works badly. A fix
+  is in the core's HLS parsing.
 - **Media3's segment URLs and the core's keys can differ.** The core
   resolves a playlist's URIs with the WHATWG URL parser, which lowercases
   the host, drops a default port and percent-encodes spaces and non-ASCII

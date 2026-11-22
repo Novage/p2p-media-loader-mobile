@@ -47,13 +47,13 @@ internal class CoreSession(private val port: PlayerPort) {
     }
 
     /**
-     * Query [name] (`loadable`, `config`): its JSON, or null when it failed (not taken, or the
-     * engine closed).
+     * Query [name] (`loadable`, `config`, `manifest`): its JSON, or null when it is JSON null or it
+     * failed (not taken, or the engine closed).
      *
      * @throws InterruptedIOException when the waiting thread is interrupted.
      */
     fun query(name: String, texts: List<String?> = emptyList()): String? =
-        (call(name, texts).await() as? Answer.Value)?.json
+        (call(name, texts).await() as? Answer.Value)?.json?.takeIf { it != "null" }
 
     /** Starts a call that has an answer; [Call.await] waits for it. */
     fun call(name: String, texts: List<String?>): Call {
