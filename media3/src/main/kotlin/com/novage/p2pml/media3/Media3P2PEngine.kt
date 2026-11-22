@@ -22,6 +22,8 @@ import androidx.media3.extractor.text.SubtitleParser
 import com.google.common.base.Supplier
 import com.novage.p2pml.core.Core
 import com.novage.p2pml.core.CoreConfig
+import com.novage.p2pml.core.CoreEvent
+import com.novage.p2pml.core.CoreEventListener
 import com.novage.p2pml.core.LiveDelay
 import com.novage.p2pml.core.PlaybackState
 import com.novage.p2pml.core.ProcessedManifest
@@ -133,6 +135,16 @@ internal constructor(
         if (main.isEmpty()) return
         if (main.none(ProcessedStream::isLive)) placement = null
         else manifest.liveDelay?.let { placement = it }
+    }
+
+    /** The core's events, as `HlsJsP2PEngine.addEventListener`: see [Core.addEventListener]. */
+    public fun <T> addEventListener(event: CoreEvent<T>, listener: CoreEventListener<T>) {
+        core.addEventListener(event, listener)
+    }
+
+    /** As `HlsJsP2PEngine.removeEventListener`: see [Core.removeEventListener]. */
+    public fun <T> removeEventListener(event: CoreEvent<T>, listener: CoreEventListener<T>) {
+        core.removeEventListener(event, listener)
     }
 
     /**

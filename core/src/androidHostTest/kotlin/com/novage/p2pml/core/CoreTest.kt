@@ -3,9 +3,11 @@ package com.novage.p2pml.core
 import com.novage.p2pml.engine.JsEngine
 import java.io.InterruptedIOException
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -93,6 +95,85 @@ class CoreTest {
         assertNotNull(
             assertFailsWith<ExecutionException> { get(TIMEOUT_SECONDS, TimeUnit.SECONDS) }.cause
         )
+
+    @Test
+    fun theCoresEventsReachItsListenersOnTheEventThread() {
+        val added = LinkedBlockingQueue<Pair<String, StreamAddedDetails>>()
+        val loaded = LinkedBlockingQueue<SegmentLoadDetails>()
+        val config = CompletableFuture<CoreConfig>()
+        core.addEventListener(CoreEvent.OnStreamAdded) {
+            added.put(Thread.currentThread().name to it)
+        }
+        core.addEventListener(CoreEvent.OnSegmentLoaded) { details ->
+            // Not on the core's thread: a listener can call the core.
+            config.complete(core.getConfig())
+            loaded.put(details)
+        }
+        giveManifests()
+        val (thread, stream) = assertNotNull(added.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertEquals("p2pml-events", thread)
+        assertEquals(url("/media.m3u8"), stream.stream.runtimeId)
+        assertEquals(StreamType.MAIN, stream.stream.type)
+        core.loadSegment(url("/seg0.ts"))
+        val details = assertNotNull(loaded.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+        assertEquals(url("/seg0.ts"), details.segment.url)
+        assertEquals(SEGMENT_BYTES.toLong(), details.bytesLength)
+        assertEquals(DownloadSource.HTTP, details.downloadSource)
+        val fromListener = config.get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        assertEquals(SWARM_ID, fromListener.mainStream?.swarmId, "a call to the core in a listener")
+    }
+
+    @Test
+    fun aRemovedListenerHasNoEventAndAThrowingOneStopsNoOther() {
+        val after = LinkedBlockingQueue<StreamAddedDetails>()
+        val removedCalls = AtomicInteger()
+        val removed = CoreEventListener<StreamAddedDetails> { removedCalls.incrementAndGet() }
+        // An Error, not only an Exception: an app's TODO() or assert.
+        core.addEventListener(CoreEvent.OnStreamAdded) {
+            throw AssertionError("a listener's failure")
+        }
+        // An app's exception whose text throws too.
+        core.addEventListener(CoreEvent.OnStreamAdded) { throw TextlessException() }
+        core.addEventListener(CoreEvent.OnStreamAdded, removed)
+        core.addEventListener(CoreEvent.OnStreamAdded) { after.put(it) }
+        core.removeEventListener(CoreEvent.OnStreamAdded, removed)
+        giveManifests()
+        assertNotNull(after.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the listener after it")
+        assertEquals(0, removedCalls.get(), "the removed listener")
+        // The failure is a line of the engine's log.
+        val line = lines.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        assertTrue(line?.contains("a listener's failure") == true, "the line: $line")
+        // With its class, where its text throws.
+        val textless = lines.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        assertTrue(textless?.contains("TextlessException") == true, "the line: $textless")
+    }
+
+    private class TextlessException : RuntimeException() {
+        override val message: String
+            get() = error("no text")
+    }
+
+    @Test
+    fun aCloseDoesNotInterruptARunningListener() {
+        val running = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val interrupted = CompletableFuture<Boolean>()
+        core.addEventListener(CoreEvent.OnStreamAdded) {
+            running.countDown()
+            interrupted.complete(
+                try {
+                    !release.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                } catch (_: InterruptedException) {
+                    true
+                }
+            )
+        }
+        giveManifests()
+        assertTrue(running.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the listener runs")
+        core.close()
+        release.countDown()
+        assertEquals(false, interrupted.get(TIMEOUT_SECONDS, TimeUnit.SECONDS), "interrupted")
+    }
 
     @Test
     fun getConfigGivesTheGivenSettingsAndTheDefaults() {
@@ -286,8 +367,15 @@ class CoreTest {
                 secondaryStream = StreamConfig().apply { swarmId = "other" }
             }
         val fallback = Core(config) { throw UnsatisfiedLinkError("no libp2pml") }
+        val fallbackEvents = LinkedBlockingQueue<StreamAddedDetails>()
+        fallback.addEventListener(CoreEvent.OnStreamAdded) { fallbackEvents.put(it) }
         giveManifests(fallback)
         fallback.updatePlayback(PlaybackState(1.0, 1.0))
+        // An event would come later, on the event thread.
+        assertEquals(null, fallbackEvents.poll(NO_EVENT_MS, TimeUnit.MILLISECONDS), "no core")
+        val listener = CoreEventListener<StreamAddedDetails> {}
+        fallback.addEventListener(CoreEvent.OnStreamAdded, listener)
+        fallback.removeEventListener(CoreEvent.OnStreamAdded, listener)
         assertEquals(null, fallback.processManifest(url("/media.m3u8"), data = MEDIA))
         assertFalse(fallback.isSegmentLoadable(url("/seg0.ts")))
         assertFailsWith<CoreRequestError> { fallback.loadSegment(url("/seg0.ts")) }
@@ -328,6 +416,7 @@ class CoreTest {
         const val MASTER = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\nmedia.m3u8\n"
         const val VOD_SEGMENTS = 4
         val LIVE_PLACEMENT = LiveDelay(36.0, 4.0, 32.0, 44.0)
+        const val NO_EVENT_MS = 200L
         const val LIVE_SPAN = 40.0
         const val DATE_PLUS_01 = "#EXT-X-PROGRAM-DATE-TIME:2024-01-01T00:00:00.000+01\n"
         val LIVE =

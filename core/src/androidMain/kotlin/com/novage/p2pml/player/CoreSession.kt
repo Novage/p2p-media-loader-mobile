@@ -64,6 +64,9 @@ internal class CoreSession(private val port: PlayerPort) {
         return call
     }
 
+    /** Takes the core's event [name] with its JSON details, on the engine thread. */
+    @Volatile var onEvent: (name: String, json: String) -> Unit = { _, _ -> }
+
     /** The bridge's answer to call [id], on the engine thread. */
     fun answer(id: Int, answer: Answer) {
         calls.remove(id)?.complete(answer)

@@ -14,10 +14,22 @@
 //   playerData(id, bytes, bandwidth, main) or playerFail(id, type, message);
 // - abort(0, url, range): abortSegmentLoading;
 // - playback(0, bufferAhead, rate): updatePlayback, with numbers as text;
-// - destroy(0): destroy, which readies the core for the next source.
+// - destroy(0): destroy, which readies the core for the next source;
+// - listen(0, event) and unlisten(0, event): from then on, the core's event
+//   `event` (an onXxx name of its CoreEventMap) goes, or no longer goes, to
+//   the platform with natives.playerCoreEvent(event, json): its details object,
+//   or, for the two chunk events, their arguments by name. An error or a
+//   warning is {name, type, message, timestamp, cause}: JSON would drop its
+//   message, which is not enumerable.
 (natives) => {
-  const { playerListen, playerValue, playerData, playerFail, reportError } =
-    natives;
+  const {
+    playerListen,
+    playerValue,
+    playerData,
+    playerFail,
+    playerCoreEvent,
+    reportError,
+  } = natives;
   // Kept now, so that a script that replaces these globals changes nothing
   // here.
   const { JSON, Number, String, Uint8Array } = globalThis;
@@ -28,6 +40,64 @@
   let rules;
   // The loads that have no answer yet, by id.
   const loads = new Set();
+  // The core's events that the platform listens to, with their listeners.
+  const forwarded = new Map();
+
+  // An error as data; undefined stays undefined.
+  const errorOf = (error) => {
+    if (error === undefined) {
+      return undefined;
+    }
+    if (error === null || typeof error !== "object") {
+      return { name: "Error", message: String(error) };
+    }
+    return {
+      name: String(error.name ?? "Error"),
+      type: error.type,
+      message: String(error.message ?? ""),
+      timestamp: error.timestamp,
+      cause: errorOf(error.cause),
+    };
+  };
+
+  // JSON.stringify drops a key whose value is undefined.
+  const dataOf = (details) => ({
+    ...details,
+    error: errorOf(details.error),
+    warning: errorOf(details.warning),
+  });
+
+  // The two chunk events have their details as arguments, to spare the core
+  // an object for each chunk.
+  const positional = {
+    __proto__: null,
+    onChunkDownloaded: (
+      bytesLength,
+      downloadSource,
+      peerId,
+      streamType,
+      infoHash,
+    ) => ({ bytesLength, downloadSource, peerId, streamType, infoHash }),
+    onChunkUploaded: (bytesLength, peerId, streamType, infoHash) => ({
+      bytesLength,
+      peerId,
+      streamType,
+      infoHash,
+    }),
+  };
+
+  // A listener of event `name` that gives it to the platform. An exception
+  // is reported, never thrown into the core.
+  const forwarderOf = (name) => {
+    const toData = positional[name] ?? dataOf;
+    return (...args) => {
+      try {
+        playerCoreEvent(name, JSON.stringify(toData(...args)));
+      } catch (error) {
+        reportError(error);
+      }
+    };
+  };
 
   // A failure as the Kotlin Core's CoreRequestError: the type of the core's
   // errors, such as "failed" or "aborted", and a message.
@@ -100,6 +170,10 @@
               manifestParsers: [hlsManifestParser],
             });
             rules = { liveDelayFor, playerBufferFor, maxLiveLatencyFor };
+            // The events that the platform listened to before the core.
+            for (const [name, listener] of forwarded) {
+              core.addEventListener(name, listener);
+            }
           },
         )
         .catch(reportError);
@@ -180,6 +254,23 @@
         playerFail(id, "aborted", "the core is destroyed");
       }
       core?.destroy();
+    },
+
+    // The core keeps its listeners across destroy(), as in JS.
+    listen(id, name) {
+      if (!forwarded.has(name)) {
+        const listener = forwarderOf(name);
+        forwarded.set(name, listener);
+        core?.addEventListener(name, listener);
+      }
+    },
+
+    unlisten(id, name) {
+      const listener = forwarded.get(name);
+      if (listener !== undefined) {
+        forwarded.delete(name);
+        core?.removeEventListener(name, listener);
+      }
     },
   };
 

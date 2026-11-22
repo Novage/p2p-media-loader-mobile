@@ -66,10 +66,14 @@ internal fun JSONObject.toProcessedManifest(): ProcessedManifest {
     )
 }
 
+/** The [StreamType] of the JS core's `StreamType` [text]. */
+internal fun streamTypeOf(text: String) =
+    if (text == "main") StreamType.MAIN else StreamType.SECONDARY
+
 private fun JSONObject.toProcessedStream() =
     ProcessedStream(
         key = getString("key"),
-        type = if (getString("type") == "main") StreamType.MAIN else StreamType.SECONDARY,
+        type = streamTypeOf(getString("type")),
         isLive = getBoolean("isLive"),
         // NaN in JS, which JSON gives as null: a date that the engine's Date cannot read, as
         // "+01", makes the times of the segments NaN.

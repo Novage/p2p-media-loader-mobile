@@ -35,8 +35,9 @@ uses the core:
 - **The core,** as the web library's `Core`: `Core(config)`, `getConfig()`,
   `processManifest(url, requestedUrl, data)`,
   `isSegmentLoadable(url, byteRange)`, `loadSegment(url, byteRange)`,
-  `abortSegmentLoading(url, byteRange)`, `updatePlayback(state)` and
-  `destroy()`. A player integration calls it as a web adapter calls the JS
+  `abortSegmentLoading(url, byteRange)`, `updatePlayback(state)`,
+  `addEventListener(event, listener)`, `removeEventListener(event, listener)`
+  and `destroy()`. A player integration calls it as a web adapter calls the JS
   core: it gives the core every manifest, asks `isSegmentLoadable` for each
   segment, loads it with `loadSegment` when it is true, loads every other
   request itself, and reports the playback state (`PlaybackState`: the
@@ -44,8 +45,8 @@ uses the core:
   does not play). With no report, the core takes an empty buffer, and every
   request is urgent.
 
-The JS core's calls that `Core` does not have, such as the events
-(`addEventListener`) and `applyDynamicConfig`, are in KNOWN-ISSUES.md.
+The JS core's calls that `Core` does not have, such as
+`applyDynamicConfig`, are in KNOWN-ISSUES.md.
 
 ## The settings
 
@@ -91,13 +92,33 @@ HTTP.
   was no redirect.
 - **Threads:** every call can come from any thread; the core's work is on
   the engine thread.
+- **Events:** the key of an event is an object with its JS name, of
+  `CoreEvent` (`CoreEvent.OnSegmentLoaded`, ...), which gives the type of its
+  details: `core.addEventListener(CoreEvent.OnSegmentLoaded) { details -> }`.
+  The details are data classes in the JS shapes; the two chunk events, whose
+  JS details are arguments, give an object too (`ChunkDownloadedDetails`,
+  `ChunkUploadedDetails`). An error or a warning is an `EventError`, with
+  the JS class's `name`, its `type`, its `message`, a `RequestError`'s
+  `timestamp`, and its `cause`. The listeners run in order on a thread of
+  the library's (`p2pml-events`), never on the engine thread, so that they
+  can call the core and take their time; an app that updates its UI posts to
+  its main thread. As in JS, the listeners stay across `destroy()`, a
+  listener added twice is called twice, and one that throws stops no other
+  (the engine's log has it). The listeners of an event are the ones that it
+  has when the event thread delivers it: a listener added late can get an
+  event that was already on its way, and one removed can still get such an
+  event. `close()` drops the events that the event thread has not started to
+  deliver; the one that it delivers then still reaches all its listeners. The
+  engine forwards an event from JS only while it has a listener: an event that
+  no app listens to costs nothing. With no core, nothing calls a listener.
 
 ## Media3
 
 `Media3P2PEngine` (`:media3`) is the player's engine for Media3, as
 `HlsJsP2PEngine` is for HLS.js: `Media3P2PEngine(Media3P2PEngineConfig(core))`,
-`getConfig()` and `destroy()` with their JS meanings, and `close()`, which
-ends its core. `buildPlayer(context, builder, upstream)` is its counterpart
+`getConfig()`, `addEventListener`, `removeEventListener` and `destroy()` with
+their JS meanings (the events are its core's, as HlsJsP2PEngine's), and
+`close()`, which ends its core. `buildPlayer(context, builder, upstream)` is its counterpart
 of `getConfigForHlsJs()` and `bindHls()` together: one call, so that an app
 cannot set up a part of it only. On the app's `ExoPlayer.Builder` it sets the
 media source factory, of HLS sources that play through the core, the
@@ -136,6 +157,12 @@ engine.close()
   recovers on its own, and falls back to HTTP where it must; a case that it
   cannot recover from is a defect of the core. An engine serves one player,
   and plays one item at a time (KNOWN-ISSUES.md).
+- **Preload:** for the best P2P ratio, an app does not preload through the
+  engine: no `DefaultPreloadManager` and no `setPreloadConfiguration`, keep
+  lazy preparation on (the default), and give the player one item at a time
+  where a short gap between items is acceptable. A preload plays, but the
+  segments of a preloaded item load over HTTP until it plays, and today it
+  also takes the core from the item that plays (KNOWN-ISSUES.md).
 - **The playback state:** the engine reports it to the core
   (`updatePlayback`) on each change of the player's state, play, pause,
   seek, speed and timeline, after each chunk that the player loads, and once

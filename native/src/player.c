@@ -113,11 +113,37 @@ static JSValue player_answer(JSContext *context, JSValueConst this_value, int ar
   return JS_UNDEFINED;
 }
 
+// playerCoreEvent(name, json): the core's event `name`, which the platform
+// listens to.
+static JSValue player_core_event(JSContext *context, JSValueConst this_value, int argc,
+                                 JSValueConst *argv) {
+  (void)this_value;
+  (void)argc;
+  p2pml_player_client *client = &player_of(context)->client;
+  size_t name_length = 0;
+  const char *name = JS_ToCStringLen(context, &name_length, argv[0]);
+  if (name == NULL) {
+    return JS_EXCEPTION;
+  }
+  size_t json_length = 0;
+  const char *json = JS_ToCStringLen(context, &json_length, argv[1]);
+  if (json == NULL) {
+    JS_FreeCString(context, name);
+    return JS_EXCEPTION;
+  }
+  client->core_event(client->data, (const uint8_t *)name, name_length, (const uint8_t *)json,
+                     json_length);
+  JS_FreeCString(context, json);
+  JS_FreeCString(context, name);
+  return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry player_functions[] = {
     JS_CFUNC_DEF("playerListen", 1, player_listen),
     JS_CFUNC_MAGIC_DEF("playerValue", 2, player_answer, 0),
     JS_CFUNC_MAGIC_DEF("playerData", 4, player_answer, 1),
     JS_CFUNC_MAGIC_DEF("playerFail", 3, player_answer, 2),
+    JS_CFUNC_DEF("playerCoreEvent", 2, player_core_event),
 };
 
 bool p2pml_player_add(JSContext *context, JSValueConst natives) {

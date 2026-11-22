@@ -130,7 +130,8 @@ internal object NativeEngine {
 
     /**
      * The answers of the player bridge, on the engine thread (native/src/player.h): one for each
-     * call. Texts are UTF-8 bytes, as [WsSink]'s text.
+     * call, and the core's events that the platform listens to. Texts are UTF-8 bytes, as
+     * [WsSink]'s text.
      */
     interface PlayerSink {
         /** The answer of query [id]: JSON. */
@@ -144,5 +145,8 @@ internal object NativeEngine {
 
         /** Load [id] failed: the error's [type], such as "failed" or "aborted", and its message. */
         fun fail(id: Int, type: ByteArray, message: ByteArray)
+
+        /** The core's event [name], with its details as [json]. */
+        fun coreEvent(name: ByteArray, json: ByteArray)
     }
 }

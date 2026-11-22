@@ -1,6 +1,7 @@
 package com.novage.p2pml.core
 
 import com.novage.p2pml.engine.JsEngine
+import com.novage.p2pml.engine.JsLog
 import com.novage.p2pml.player.Answer
 import com.novage.p2pml.player.CoreSession
 import java.io.IOException
@@ -73,8 +74,34 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
     private val session: CoreSession =
         engine?.player ?: CoreSession { _, _, _, notTaken -> notTaken() }
 
+    // The listeners of the core's events; JS forwards the events that they listen to.
+    private val events =
+        EventHub(
+            subscribe = { name, listen ->
+                session.send(if (listen) "listen" else "unlisten", listOf(name))
+            },
+            warn = { message -> engine?.log?.write(JsLog.Level.WARN, message) },
+        )
+
     init {
+        session.onEvent = events::post
         session.send("start", listOf(this.config))
+    }
+
+    /**
+     * Calls [listener] with the details of each [event] of the core, as the JS core's
+     * `addEventListener`: until [removeEventListener], also across [destroy]. Any thread. The
+     * listeners run in order on a thread of the library's (`p2pml-events`), never on the core's:
+     * they can call the core, and take their time. The same listener added twice is called twice,
+     * as in JS. With no core, nothing calls it.
+     */
+    public fun <T> addEventListener(event: CoreEvent<T>, listener: CoreEventListener<T>) {
+        events.add(event, listener)
+    }
+
+    /** Stops [listener] for [event], as the JS core's `removeEventListener`. Any thread. */
+    public fun <T> removeEventListener(event: CoreEvent<T>, listener: CoreEventListener<T>) {
+        events.remove(event, listener)
     }
 
     /**
@@ -176,8 +203,13 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
         session.send("destroy")
     }
 
-    /** Ends the core's engine: the open calls fail, and the core does nothing after it. */
+    /**
+     * Ends the core's engine: the open calls fail, and the core does nothing after it. The events
+     * that the event thread has not started to deliver go; the event that it delivers now still
+     * reaches its other listeners, and a listener that runs ends as usual.
+     */
     override fun close() {
+        events.close()
         engine?.close()
     }
 

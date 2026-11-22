@@ -419,6 +419,12 @@ playback state.
     which, as in JS, readies the core for the next source.
   - `playback(bufferAhead, rate)` is `updatePlayback`, with the two numbers
     as text.
+  - `listen(event)` and `unlisten(event)`: from then on, the core's event
+    `event` (an `onXxx` name of its `CoreEventMap`) goes, or no longer goes,
+    to Kotlin. `Core` sends them at its first listener of an event and after
+    its last, so that JS forwards only the events that an app listens to;
+    the chunk events come for each chunk. The glue attaches the listeners
+    that were asked for before the core was made when it makes the core.
 - **The answers,** from JS to Kotlin, one for each query and each load,
   through the natives and the client of `p2pml_engine_run` (`PlayerSink` in
   Kotlin):
@@ -434,6 +440,14 @@ playback state.
     core keeps one load for each stream type (main, secondary): a new load
     of the same type aborts the open one. So the integration loads one
     segment at a time for each type, as HLS.js does.
+- **The core's events,** from JS to Kotlin, with no call:
+  `playerCoreEvent(name, json)` gives the core's event with its details as
+  JSON (`PlayerSink.coreEvent` in Kotlin). The two chunk events, whose JS details are arguments, give an
+  object with the arguments' names. An error or a warning is
+  `{name, type, message, timestamp, cause}`: JSON would drop its `message`,
+  which is not enumerable. An exception while the glue serializes an event
+  is reported, never thrown into the core. `Core` gives the details to its
+  listeners on its event thread (specs/api.md, "Events").
 - **When JS does not take an event** (an exception, out of memory), the
   listener's error is reported, and the call fails at once: a query gives no
   value, a load fails.

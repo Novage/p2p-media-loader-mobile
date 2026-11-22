@@ -107,8 +107,23 @@ const serve = async (url, bytes) => {
   return request;
 };
 
+// Fails each request of `url` until load `id` has its answer.
+const failEach = async (url, id) => {
+  for (let i = 0; answersOf(id).length === 0 && i < 200; i++) {
+    for (const request of fakeHttp.started) {
+      if (request.url === url && !request.used) {
+        request.used = true;
+        fakeHttp.fail(request.id, "no network");
+      }
+    }
+    await tasksRun();
+  }
+};
+
 test("before start, nothing is loadable and a load fails", () =>
   inOrder(async () => {
+    // Takes effect when the core is made: see the events test.
+    fakePlayer.send("listen", 0, "onStreamAdded");
     assertEquals(await query("loadable", BASE + "seg0.m4s"), false, "loadable");
     assertEquals(await query("config"), null, "config");
     const manifest = await query(
@@ -174,15 +189,7 @@ test("a load that fails gets the core's error type", () =>
   inOrder(async () => {
     fakePlayer.send("load", 7, BASE + "seg2.m4s");
     // The core tries again after a failure: each request fails.
-    for (let i = 0; answersOf(7).length === 0 && i < 200; i++) {
-      for (const request of fakeHttp.started) {
-        if (request.url === BASE + "seg2.m4s" && !request.used) {
-          request.used = true;
-          fakeHttp.fail(request.id, "no network");
-        }
-      }
-      await tasksRun();
-    }
+    await failEach(BASE + "seg2.m4s", 7);
     const answer = await answerTo(7);
     assertEquals(`${answer.kind} ${answer.type}`, "fail failed", "the answer");
     assertEquals(answersOf(7).length, 1, "one answer");
@@ -357,5 +364,78 @@ test("a manifest gives the core's streams, and a live one its placement", () =>
       JSON.stringify(live.liveDelay),
       '{"delay":36,"segment":4,"playerBuffer":32,"maxLiveLatency":44}',
     );
+    fakePlayer.send("destroy", 0);
+  }));
+
+// The core's events of a name from index `start`, with their details.
+const eventsFrom = (start, name) =>
+  fakePlayer.coreEvents
+    .slice(start)
+    .filter((e) => e.name === name)
+    .map((e) => ({ name: e.name, details: JSON.parse(e.json) }));
+
+test("the core's events reach the platform while it listens", () =>
+  inOrder(async () => {
+    // Listened to before start: the first manifests gave it.
+    const [added] = eventsFrom(0, "onStreamAdded");
+    assertEquals(added.details.stream.runtimeId, BASE + "media.m3u8", "added");
+    assertEquals(added.details.stream.type, "main", "its type");
+
+    const start = fakePlayer.coreEvents.length;
+    for (const name of [
+      "onSegmentLoaded",
+      "onChunkDownloaded",
+      "onSegmentError",
+      "onSegmentRegistryMiss",
+    ]) {
+      fakePlayer.send("listen", 0, name);
+    }
+    giveManifests();
+    fakePlayer.send("load", 30, BASE + "seg3.m4s");
+    await serve(BASE + "seg3.m4s", new Uint8Array([1, 2, 3]));
+    await answerTo(30);
+    const [loaded] = eventsFrom(start, "onSegmentLoaded");
+    assertEquals(loaded.details.segment.url, BASE + "seg3.m4s", "the segment");
+    assertEquals(loaded.details.bytesLength, 3, "its bytes");
+    assertEquals(loaded.details.downloadSource, "http", "its source");
+    // A chunk event's arguments come by name.
+    const chunk = eventsFrom(start, "onChunkDownloaded").at(-1).details;
+    assertEquals(
+      `${chunk.bytesLength} ${chunk.downloadSource} ${chunk.streamType}`,
+      "3 http main",
+      "a chunk",
+    );
+
+    fakePlayer.send("load", 31, BASE + "seg2.m4s");
+    await failEach(BASE + "seg2.m4s", 31);
+    const { error } = eventsFrom(start, "onSegmentError")[0].details;
+    assertEquals(error.name, "RequestError", "the error's class");
+    assertEquals(typeof error.type, "string", "its type");
+    assertEquals(typeof error.message, "string", "its message");
+
+    await query("loadable", BASE + "unknown.m4s");
+    const [miss] = eventsFrom(start, "onSegmentRegistryMiss");
+    assertEquals(miss.details.url, BASE + "unknown.m4s", "a registry miss");
+
+    // No more after unlisten.
+    fakePlayer.send("unlisten", 0, "onSegmentLoaded");
+    const before = eventsFrom(start, "onSegmentLoaded").length;
+    fakePlayer.send("load", 32, BASE + "seg0.m4s");
+    await serve(BASE + "seg0.m4s", new Uint8Array([4]));
+    await answerTo(32);
+    assertEquals(
+      eventsFrom(start, "onSegmentLoaded").length,
+      before,
+      "unlistened",
+    );
+    // The bridge forwards nothing more for a test after this one.
+    for (const name of [
+      "onStreamAdded",
+      "onChunkDownloaded",
+      "onSegmentError",
+      "onSegmentRegistryMiss",
+    ]) {
+      fakePlayer.send("unlisten", 0, name);
+    }
     fakePlayer.send("destroy", 0);
   }));

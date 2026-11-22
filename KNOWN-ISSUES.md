@@ -46,8 +46,7 @@ that describes the behaviour, not here.
   one `NoClassDefFoundError`. `Core` then has no core: the player loads every
   request itself and plays without P2P (specs/api.md).
 - **The API is not complete.** `Core` does not have these calls of the JS
-  core: the events (`addEventListener`, `removeEventListener`),
-  `applyDynamicConfig`, `setManifestResponseUrl`,
+  core: `applyDynamicConfig`, `setManifestResponseUrl`,
   `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
   (`isSegmentIndex`, `processSegmentIndex`), and `Media3P2PEngine` has the
   same gaps. There is no `:proxy` module (specs/api.md).
@@ -58,8 +57,11 @@ that describes the behaviour, not here.
   at once when lazy preparation is off; a preload (`DefaultPreloadManager`)
   also prepares a source. The item that plays then loses its core: a seek
   back in it loads without P2P, and the playlists of a live item mix into
-  the next item's swarm. An app gives the player one item at a time, and
-  does not preload through the engine.
+  the next item's swarm, so that the core's store of the item that plays
+  goes, and its later segments, some of them a second time, load over HTTP.
+  An app gives the player one item at a time, and does not preload through
+  the engine (specs/api.md, "Preload"). A fix gives the core to the source
+  that plays, not to the source that Media3 prepares.
 - **The core does not use Media3's `upstream` for its segments.** A cache
   (`CacheDataSource`), a URL signer (`ResolvingDataSource`) or request
   headers in `upstream` apply to the playlists, keys and the segments that

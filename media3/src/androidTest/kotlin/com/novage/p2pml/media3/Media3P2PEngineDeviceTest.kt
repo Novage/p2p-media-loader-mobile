@@ -25,6 +25,7 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.test.platform.app.InstrumentationRegistry
 import com.novage.p2pml.core.Core
+import com.novage.p2pml.core.CoreEvent
 import com.novage.p2pml.core.LiveDelay
 import com.novage.p2pml.core.PlaybackState
 import com.novage.p2pml.core.ProcessedManifest
@@ -87,6 +88,11 @@ class Media3P2PEngineDeviceTest {
         Media3P2PEngine(core) { state ->
             reports += state
             core.updatePlayback(state)
+        }
+    // The core's onSegmentLoaded events, through the engine.
+    private val loadedEvents =
+        AtomicInteger().also { count ->
+            engine.addEventListener(CoreEvent.OnSegmentLoaded) { count.incrementAndGet() }
         }
     private val looper = HandlerThread("media3-test").apply { start() }
     private val handler = Handler(looper.looper)
@@ -248,7 +254,7 @@ class Media3P2PEngineDeviceTest {
             // Each recovery jumps forward, which would hide repeated stalls in `played`.
             assertTrue(recoveries.get() <= 1, "${recoveries.get()} BEHIND_LIVE_WINDOW recoveries")
             assertTrue(played >= TimeUnit.SECONDS.toMillis(PLAY_SECONDS) / 2, "played $played ms")
-            assertTrue(segments.size >= MIN_SEGMENTS, "${segments.size} segments loaded")
+            assertLoaded(segments)
             assertEquals(
                 emptyList(),
                 upstreamPaths.filter { it.endsWith(".m4s") },
@@ -368,6 +374,12 @@ class Media3P2PEngineDeviceTest {
                 }
             }
         }
+
+    // The player loaded segments, and the core told the engine's listener.
+    private fun assertLoaded(segments: Collection<String>) {
+        assertTrue(segments.size >= MIN_SEGMENTS, "${segments.size} segments loaded")
+        assertTrue(loadedEvents.get() > 0, "the core's onSegmentLoaded through the engine")
+    }
 
     // The core placed the player deep in the live window, at the start of a segment, and not where
     // Media3 places it (three target durations behind the edge).

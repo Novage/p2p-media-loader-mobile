@@ -193,6 +193,19 @@ static void fake_player_fail(void *data, int32_t id, const uint8_t *type, size_t
   push_to(context, "fakePlayer", "answers", answer);
 }
 
+// fakePlayer.coreEvents records each of the core's events as {name, json}, as
+// fake_player_value records a value.
+static void fake_player_core_event(void *data, const uint8_t *name, size_t name_length,
+                                   const uint8_t *json, size_t json_length) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue event = JS_NewObject(context);
+  CHECK(JS_SetPropertyStr(context, event, "name",
+                          JS_NewStringLen(context, (const char *)name, name_length)) >= 0);
+  CHECK(JS_SetPropertyStr(context, event, "json",
+                          JS_NewStringLen(context, (const char *)json, json_length)) >= 0);
+  push_to(context, "fakePlayer", "coreEvents", event);
+}
+
 static void fake_start(void *data, int32_t id, const char *method, const char *url,
                        size_t header_count, const char *const *headers) {
   JSContext *context = p2pml_engine_context(data);
@@ -226,6 +239,7 @@ static void *run_engine(void *data) {
   p2pml_player_client fake_player = {.value = fake_player_value,
                                      .segment = fake_player_segment,
                                      .fail = fake_player_fail,
+                                     .core_event = fake_player_core_event,
                                      .data = args->engine};
   CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log,
                          &fake, &fake_ws, &fake_player));
@@ -675,6 +689,7 @@ static void add_test_globals(p2pml_engine *engine, void *data) {
   JS_SetPropertyStr(context, fake_player, "send",
                     JS_NewCFunction(context, fake_player_send, "send", 2));
   JS_SetPropertyStr(context, fake_player, "answers", JS_NewArray(context));
+  JS_SetPropertyStr(context, fake_player, "coreEvents", JS_NewArray(context));
   JS_SetPropertyStr(context, global, "fakePlayer", fake_player);
   JS_FreeValue(context, global);
 }

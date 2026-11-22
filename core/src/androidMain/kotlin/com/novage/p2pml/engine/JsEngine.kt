@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  * `WebSocket` over [SharedHttpClient]. Console lines and uncaught JS errors go to [log]. See
  * specs/engine.md.
  */
-internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat) {
+internal class JsEngine(userAgent: String, internal val log: JsLog = JsLog.logcat) {
     private val lock = Any()
     // The requests of fetch. Before the thread starts: the engine thread uses it.
     private val http =
@@ -145,6 +145,9 @@ internal class JsEngine(userAgent: String, private val log: JsLog = JsLog.logcat
                             id,
                             Answer.Failed(type.decodeToString(), message.decodeToString()),
                         )
+
+                    override fun coreEvent(name: ByteArray, json: ByteArray) =
+                        player.onEvent(name.decodeToString(), json.decodeToString())
                 }
             if (!NativeEngine.run(handle, sink, httpSink, wsSink, playerSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")

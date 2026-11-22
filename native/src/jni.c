@@ -27,6 +27,7 @@ static jmethodID ws_sink_cancel;
 static jmethodID player_sink_value;
 static jmethodID player_sink_segment;
 static jmethodID player_sink_fail;
+static jmethodID player_sink_core_event;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   (void)reserved;
@@ -100,7 +101,9 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   player_sink_value = (*env)->GetMethodID(env, player_sink, "value", "(I[B)V");
   player_sink_segment = (*env)->GetMethodID(env, player_sink, "segment", "(I[BDZ)V");
   player_sink_fail = (*env)->GetMethodID(env, player_sink, "fail", "(I[B[B)V");
-  if (player_sink_value == NULL || player_sink_segment == NULL || player_sink_fail == NULL) {
+  player_sink_core_event = (*env)->GetMethodID(env, player_sink, "coreEvent", "([B[B)V");
+  if (player_sink_value == NULL || player_sink_segment == NULL || player_sink_fail == NULL ||
+      player_sink_core_event == NULL) {
     return JNI_ERR;
   }
   return JNI_VERSION_1_6;
@@ -372,6 +375,23 @@ static void player_fail(void *data, int32_t id, const uint8_t *type, size_t type
   close_on_exception(env, player->engine);
 }
 
+static void player_core_event(void *data, const uint8_t *name, size_t name_length,
+                              const uint8_t *json, size_t json_length) {
+  engine_sink *player = data;
+  JNIEnv *env = player->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  jbyteArray names = byte_array_of(env, name, name_length);
+  jbyteArray jsons = names != NULL ? byte_array_of(env, json, json_length) : NULL;
+  if (jsons != NULL) {
+    (*env)->CallVoidMethod(env, player->sink, player_sink_core_event, names, jsons);
+  }
+  (*env)->DeleteLocalRef(env, jsons);
+  (*env)->DeleteLocalRef(env, names);
+  close_on_exception(env, player->engine);
+}
+
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv *env, jclass type,
                                                                          jlong handle, jobject sink,
                                                                          jobject http_sink,
@@ -385,8 +405,11 @@ JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv 
   p2pml_http_client http_client = {.start = http_start, .cancel = http_cancel, .data = &http};
   p2pml_ws_client ws_client = {
       .open = ws_open, .send = ws_send, .close = ws_close, .cancel = ws_cancel, .data = &ws};
-  p2pml_player_client player_client = {
-      .value = player_value, .segment = player_segment, .fail = player_fail, .data = &player};
+  p2pml_player_client player_client = {.value = player_value,
+                                       .segment = player_segment,
+                                       .fail = player_fail,
+                                       .core_event = player_core_event,
+                                       .data = &player};
   return p2pml_engine_run(log.engine, write_log, &log, &http_client, &ws_client, &player_client);
 }
 
