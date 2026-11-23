@@ -188,6 +188,75 @@ class CoreTest {
     }
 
     @Test
+    fun theStreamsAndTheirSegmentsComeFromTheCore() {
+        giveManifests()
+        val stream = core.getStreams().single()
+        assertEquals(url("/media.m3u8"), stream.runtimeId)
+        assertEquals(StreamType.MAIN, stream.type)
+        assertEquals(SWARM_ID, stream.swarmId)
+        assertEquals(stream, core.getStream(url("/media.m3u8")))
+        assertEquals(null, core.getStream(url("/other.m3u8")), "an unknown stream")
+        assertTrue(core.hasSegment(url("/seg1.ts")))
+        assertFalse(core.hasSegment(url("/other.ts")), "an unknown URL")
+        assertTrue(core.hasSegment(url("/range.ts"), RANGE))
+        assertFalse(core.hasSegment(url("/range.ts"), OTHER_RANGE), "another range")
+    }
+
+    @Test
+    fun applyDynamicConfigChangesOnlyTheSettingsThatItSets() {
+        core.applyDynamicConfig(
+            DynamicCoreConfig().apply {
+                isP2PDisabled = true
+                mainStream = DynamicStreamConfig().apply { httpErrorRetries = MAIN_HTTP_TRIES }
+            }
+        )
+        val config = core.getConfig()
+        val main = assertNotNull(config.mainStream)
+        val secondary = assertNotNull(config.secondaryStream)
+        assertEquals(true, main.isP2PDisabled, "for both stream types")
+        assertEquals(true, secondary.isP2PDisabled, "for both stream types")
+        assertEquals(MAIN_HTTP_TRIES, main.httpErrorRetries, "for the main stream")
+        assertEquals(DEFAULT_HTTP_TRIES, secondary.httpErrorRetries, "not for the secondary one")
+        assertEquals(0.0, main.httpDownloadTimeWindow, "a setting that it does not set")
+        assertEquals(SWARM_ID, main.swarmId)
+    }
+
+    @Test
+    fun applyDynamicConfigDoesNotChangeTheSettingsThatTheCoreReadsOnce() {
+        // A StreamConfig in place of a DynamicStreamConfig has them.
+        val stream =
+            StreamConfig().apply {
+                isP2PUploadDisabled = true
+                announceTrackers = listOf("wss://tracker.example.com")
+                swarmId = "other"
+            }
+        core.applyDynamicConfig(DynamicCoreConfig().apply { mainStream = stream })
+        val main = assertNotNull(core.getConfig().mainStream)
+        assertEquals(true, main.isP2PUploadDisabled, "a dynamic setting")
+        assertEquals(emptyList(), main.announceTrackers)
+        assertEquals(SWARM_ID, main.swarmId)
+    }
+
+    @Test
+    fun setManifestResponseUrlNamesTheSwarm() {
+        // No configured swarmId, which would win.
+        val config = testConfig().apply { swarmId = null }
+        var namedEngine: JsEngine? = null
+        Core(config) {
+                JsEngine("test-agent") { _, message -> lines.put(message) }
+                    .also { namedEngine = it }
+            }
+            .use { named ->
+                named.setManifestResponseUrl("https://cdn.example.com/show/index.m3u8?token=1")
+                giveManifests(named)
+                val stream = named.getStreams().single()
+                assertEquals("https://cdn.example.com/show/index.m3u8", stream.swarmId)
+            }
+        // Its lines too, before stop() reads them.
+        assertTrue(assertNotNull(namedEngine).awaitClosed(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+    }
+
+    @Test
     fun aSegmentComesThroughTheCore() {
         giveManifests()
         assertTrue(core.isSegmentLoadable(url("/seg0.ts")))
@@ -355,6 +424,11 @@ class CoreTest {
         assertEquals(null, core.processManifest(url("/media.m3u8"), data = MEDIA))
         assertFalse(core.isSegmentLoadable(url("/seg0.ts")))
         assertIs<CoreRequestError>(loadInBackground("/seg0.ts").second.failure())
+        assertEquals(emptyList(), core.getStreams())
+        assertEquals(null, core.getStream(url("/media.m3u8")))
+        assertFalse(core.hasSegment(url("/seg0.ts")))
+        core.applyDynamicConfig(DynamicCoreConfig().apply { isP2PDisabled = true })
+        core.setManifestResponseUrl(url("/master.m3u8"))
         // The given settings, in getConfig's shape.
         assertEquals(SWARM_ID, assertNotNull(core.getConfig().mainStream).swarmId)
     }
@@ -379,6 +453,11 @@ class CoreTest {
         assertEquals(null, fallback.processManifest(url("/media.m3u8"), data = MEDIA))
         assertFalse(fallback.isSegmentLoadable(url("/seg0.ts")))
         assertFailsWith<CoreRequestError> { fallback.loadSegment(url("/seg0.ts")) }
+        assertEquals(emptyList(), fallback.getStreams())
+        assertEquals(null, fallback.getStream(url("/media.m3u8")))
+        assertFalse(fallback.hasSegment(url("/seg0.ts")))
+        fallback.applyDynamicConfig(DynamicCoreConfig().apply { isP2PDisabled = true })
+        fallback.setManifestResponseUrl(url("/master.m3u8"))
         // The given settings, in getConfig's shape: a stream type's own over the ones for both.
         val given = fallback.getConfig()
         assertEquals(MEMORY_MIB, given.segmentMemoryStorageLimit, "a common setting")
@@ -407,6 +486,7 @@ class CoreTest {
         const val PARTIAL = 206
         const val NOT_FOUND = 404
         const val DEFAULT_HTTP_TRIES = 3
+        const val MAIN_HTTP_TRIES = 5
         const val SWARM_ID = "a\"b"
         const val MEMORY_MIB = 64.0
         const val BUFFER_AHEAD = 30.0

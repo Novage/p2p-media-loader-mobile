@@ -87,7 +87,7 @@ const giveManifests = () => {
   fakePlayer.send("manifest", 0, BASE + "media.m3u8", undefined, MEDIA);
 };
 
-// The value of query `name` (loadable, config), parsed.
+// The value of query `name` (such as loadable or config), parsed.
 let lastQuery = 1000;
 const query = async (name, ...texts) => {
   const id = ++lastQuery;
@@ -126,6 +126,13 @@ test("before start, nothing is loadable and a load fails", () =>
     fakePlayer.send("listen", 0, "onStreamAdded");
     assertEquals(await query("loadable", BASE + "seg0.m4s"), false, "loadable");
     assertEquals(await query("config"), null, "config");
+    assertEquals(await query("streams"), null, "streams");
+    assertEquals(await query("stream", BASE + "media.m3u8"), null, "stream");
+    assertEquals(
+      await query("hasSegment", BASE + "seg0.m4s"),
+      false,
+      "hasSegment",
+    );
     const manifest = await query(
       "manifest",
       BASE + "media.m3u8",
@@ -438,4 +445,52 @@ test("the core's events reach the platform while it listens", () =>
       fakePlayer.send("unlisten", 0, name);
     }
     fakePlayer.send("destroy", 0);
+  }));
+
+test("the streams, their segments, the swarm's name and dynamic settings", () =>
+  inOrder(async () => {
+    try {
+      // Before the first manifest: the swarm's name, without the query.
+      const named = "https://cdn.example.com/show/index.m3u8";
+      fakePlayer.send("manifestResponseUrl", 0, named + "?token=1");
+      giveManifests();
+      const streams = await query("streams");
+      assertEquals(streams.length, 1, "the streams");
+      assertEquals(streams[0].runtimeId, BASE + "media.m3u8", "its runtimeId");
+      assertEquals(streams[0].swarmId, named, "its swarm");
+      const stream = await query("stream", BASE + "media.m3u8");
+      assertEquals(stream.infoHash, streams[0].infoHash, "the stream");
+      assertEquals(await query("stream", BASE + "x.m3u8"), null, "unknown");
+
+      const has = (url, range) => query("hasSegment", BASE + url, range);
+      assertEquals(await has("seg2.m4s"), true, "a segment");
+      assertEquals(await has("other.m4s"), false, "an unknown URL");
+      assertEquals(await has("range.m4s", "0-999"), true, "its range");
+      assertEquals(await has("range.m4s", "0-500"), false, "another range");
+
+      // As in JS: for both stream types, or for one; a static key is ignored.
+      fakePlayer.send(
+        "dynamicConfig",
+        0,
+        JSON.stringify({
+          isP2PDisabled: true,
+          swarmId: "changed",
+          mainStream: { httpErrorRetries: 5 },
+        }),
+      );
+      const { mainStream, secondaryStream } = await query("config");
+      assertEquals(mainStream.isP2PDisabled, true, "for both");
+      assertEquals(secondaryStream.isP2PDisabled, true, "for both, secondary");
+      assertEquals(mainStream.httpErrorRetries, 5, "for main");
+      assertEquals(secondaryStream.httpErrorRetries, 3, "not for secondary");
+      assertEquals(mainStream.swarmId, undefined, "a static key");
+    } finally {
+      // The settings of the tests after this one, which destroy keeps.
+      fakePlayer.send(
+        "dynamicConfig",
+        0,
+        JSON.stringify({ isP2PDisabled: false, httpErrorRetries: 3 }),
+      );
+      fakePlayer.send("destroy", 0);
+    }
   }));

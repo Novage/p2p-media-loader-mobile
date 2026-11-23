@@ -5,12 +5,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The settings of a stream, as the JS core's `StreamConfig` (specs/api.md), with the same names and
- * meanings. Null is unset: the core's default, as an absent JS field. Numbers must be finite, as
- * JSON's. The JS settings that are functions (`httpRequestSetup`, `validateP2PSegment`,
- * `segmentFilter`, `streamIdBuilder`) are not here: a Kotlin function cannot run in the engine.
+ * The settings of a stream that the core can change while it runs, as the JS core's
+ * `DynamicStreamConfig` (specs/api.md), with the same names and meanings. Null is unset: the core's
+ * default, or with [Core.applyDynamicConfig] the value that the core has now. Numbers must be
+ * finite, as JSON's. The JS settings that are functions (`httpRequestSetup`, `validateP2PSegment`)
+ * are not here: a Kotlin function cannot run in the engine.
  */
-public open class StreamConfig {
+public open class DynamicStreamConfig {
     public var isP2PUploadDisabled: Boolean? = null
     public var isP2PDisabled: Boolean? = null
     public var urgentBufferThreshold: Double? = null
@@ -28,9 +29,7 @@ public open class StreamConfig {
     /** As in JS, the count of all HTTP tries: 0 makes the core load nothing over HTTP. */
     public var httpErrorRetries: Int? = null
     public var p2pErrorRetries: Int? = null
-    public var announceTrackers: List<String>? = null
     public var rtcConfig: RtcConfig? = null
-    public var swarmId: String? = null
     public var p2pMaxPeers: Int? = null
     public var p2pChurnMaxPeersMultiplier: Double? = null
     public var p2pChurnCleanupIntervalMs: Long? = null
@@ -39,6 +38,16 @@ public open class StreamConfig {
     public var webRtcOfferTimeoutMs: Long? = null
     public var webRtcIceGatheringTimeoutMs: Long? = null
     public var webRtcConnectionTimeoutMs: Long? = null
+}
+
+/**
+ * The settings of a stream, as the JS core's `StreamConfig` (specs/api.md): the dynamic ones, and
+ * two that are not dynamic, as in JS: [announceTrackers] and [swarmId]. The JS settings that are
+ * functions (`segmentFilter`, `streamIdBuilder`, and `swarmId` as a function) are not here.
+ */
+public open class StreamConfig : DynamicStreamConfig() {
+    public var announceTrackers: List<String>? = null
+    public var swarmId: String? = null
 }
 
 /**
@@ -54,6 +63,23 @@ public class CoreConfig : StreamConfig() {
     public var secondaryStream: StreamConfig? = null
 }
 
+/**
+ * The changes of the core's settings while it runs, as the JS core's `DynamicCoreConfig`
+ * (specs/api.md): for [Core.applyDynamicConfig]. Only the set (not null) fields change: the others
+ * keep their values. Of a config given as [mainStream] or [secondaryStream], only the stream
+ * settings apply: a [StreamConfig] goes without its `announceTrackers` and `swarmId`, which do not
+ * change. As in JS, [segmentMemoryStorageLimit] applies from the next segment storage that the core
+ * makes (at the first load, and at the first after [Core.destroy]), and
+ * [trackerClientVersionPrefix] does not apply.
+ */
+public class DynamicCoreConfig : DynamicStreamConfig() {
+    /** The memory for segments, in MiB. */
+    public var segmentMemoryStorageLimit: Double? = null
+    public var trackerClientVersionPrefix: String? = null
+    public var mainStream: DynamicStreamConfig? = null
+    public var secondaryStream: DynamicStreamConfig? = null
+}
+
 /** The WebRTC settings: the ICE servers, as `RTCConfiguration`'s. */
 public class RtcConfig(public val iceServers: List<IceServer>)
 
@@ -67,56 +93,75 @@ constructor(
 )
 
 // The fields by type, for the JSON of the core's settings.
-private val BOOLEANS: List<KMutableProperty1<StreamConfig, Boolean?>> =
-    listOf(StreamConfig::isP2PUploadDisabled, StreamConfig::isP2PDisabled)
-private val INTS: List<KMutableProperty1<StreamConfig, Int?>> =
+private val BOOLEANS: List<KMutableProperty1<DynamicStreamConfig, Boolean?>> =
+    listOf(DynamicStreamConfig::isP2PUploadDisabled, DynamicStreamConfig::isP2PDisabled)
+private val INTS: List<KMutableProperty1<DynamicStreamConfig, Int?>> =
     listOf(
-        StreamConfig::simultaneousHttpDownloads,
-        StreamConfig::simultaneousP2PDownloads,
-        StreamConfig::webRtcMaxMessageSize,
-        StreamConfig::httpErrorRetries,
-        StreamConfig::p2pErrorRetries,
-        StreamConfig::p2pMaxPeers,
-        StreamConfig::webRtcOffersCount,
+        DynamicStreamConfig::simultaneousHttpDownloads,
+        DynamicStreamConfig::simultaneousP2PDownloads,
+        DynamicStreamConfig::webRtcMaxMessageSize,
+        DynamicStreamConfig::httpErrorRetries,
+        DynamicStreamConfig::p2pErrorRetries,
+        DynamicStreamConfig::p2pMaxPeers,
+        DynamicStreamConfig::webRtcOffersCount,
     )
-private val LONGS: List<KMutableProperty1<StreamConfig, Long?>> =
+private val LONGS: List<KMutableProperty1<DynamicStreamConfig, Long?>> =
     listOf(
-        StreamConfig::httpDownloadInitialTimeoutMs,
-        StreamConfig::p2pNotReceivingBytesTimeoutMs,
-        StreamConfig::p2pInactiveLoaderDestroyTimeoutMs,
-        StreamConfig::httpNotReceivingBytesTimeoutMs,
-        StreamConfig::httpFirstByteTimeoutMs,
-        StreamConfig::p2pChurnCleanupIntervalMs,
-        StreamConfig::p2pChurnGracePeriodMs,
-        StreamConfig::webRtcOfferTimeoutMs,
-        StreamConfig::webRtcIceGatheringTimeoutMs,
-        StreamConfig::webRtcConnectionTimeoutMs,
+        DynamicStreamConfig::httpDownloadInitialTimeoutMs,
+        DynamicStreamConfig::p2pNotReceivingBytesTimeoutMs,
+        DynamicStreamConfig::p2pInactiveLoaderDestroyTimeoutMs,
+        DynamicStreamConfig::httpNotReceivingBytesTimeoutMs,
+        DynamicStreamConfig::httpFirstByteTimeoutMs,
+        DynamicStreamConfig::p2pChurnCleanupIntervalMs,
+        DynamicStreamConfig::p2pChurnGracePeriodMs,
+        DynamicStreamConfig::webRtcOfferTimeoutMs,
+        DynamicStreamConfig::webRtcIceGatheringTimeoutMs,
+        DynamicStreamConfig::webRtcConnectionTimeoutMs,
     )
-private val DOUBLES: List<KMutableProperty1<StreamConfig, Double?>> =
+private val DOUBLES: List<KMutableProperty1<DynamicStreamConfig, Double?>> =
     listOf(
-        StreamConfig::urgentBufferThreshold,
-        StreamConfig::httpDownloadTimeWindow,
-        StreamConfig::p2pDownloadTimeWindow,
-        StreamConfig::p2pChurnMaxPeersMultiplier,
+        DynamicStreamConfig::urgentBufferThreshold,
+        DynamicStreamConfig::httpDownloadTimeWindow,
+        DynamicStreamConfig::p2pDownloadTimeWindow,
+        DynamicStreamConfig::p2pChurnMaxPeersMultiplier,
     )
 
 /** The set fields as a JSON object, with the JS names. */
-internal fun StreamConfig.toJson(): JSONObject {
+internal fun DynamicStreamConfig.toJson(): JSONObject {
     val json = JSONObject()
     for (field in BOOLEANS + INTS + LONGS + DOUBLES) {
         json.putOpt(field.name, field.get(this))
     }
-    json.putOpt("announceTrackers", announceTrackers?.let(::JSONArray))
     json.putOpt("rtcConfig", rtcConfig?.toJson())
-    json.putOpt("swarmId", swarmId)
-    if (this is CoreConfig) {
-        json.putOpt("segmentMemoryStorageLimit", segmentMemoryStorageLimit)
-        json.putOpt("trackerClientVersionPrefix", trackerClientVersionPrefix)
-        json.putOpt("mainStream", mainStream?.toJson())
-        json.putOpt("secondaryStream", secondaryStream?.toJson())
+    if (this is StreamConfig) {
+        json.putOpt("announceTrackers", announceTrackers?.let(::JSONArray))
+        json.putOpt("swarmId", swarmId)
+    }
+    // The common settings, and the settings of each stream type.
+    when (this) {
+        is CoreConfig -> {
+            json.putOpt("segmentMemoryStorageLimit", segmentMemoryStorageLimit)
+            json.putOpt("trackerClientVersionPrefix", trackerClientVersionPrefix)
+            json.putOpt("mainStream", mainStream?.toJson())
+            json.putOpt("secondaryStream", secondaryStream?.toJson())
+        }
+        is DynamicCoreConfig -> {
+            json.putOpt("segmentMemoryStorageLimit", segmentMemoryStorageLimit)
+            json.putOpt("trackerClientVersionPrefix", trackerClientVersionPrefix)
+            json.putOpt("mainStream", mainStream?.dynamicJson())
+            json.putOpt("secondaryStream", secondaryStream?.dynamicJson())
+        }
     }
     return json
 }
+
+// Without the settings that are not dynamic, which a StreamConfig in its place has: JS does not
+// ignore announceTrackers in a change.
+private fun DynamicStreamConfig.dynamicJson() =
+    toJson().apply {
+        remove("announceTrackers")
+        remove("swarmId")
+    }
 
 private fun RtcConfig.toJson() =
     JSONObject()

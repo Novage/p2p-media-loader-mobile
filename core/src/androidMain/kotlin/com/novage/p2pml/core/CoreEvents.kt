@@ -407,7 +407,7 @@ private fun JSONObject.segment(): Segment =
         )
     }
 
-private fun JSONObject.toStream() =
+internal fun JSONObject.toStream() =
     Stream(
         text("runtimeId"),
         streamType("type"),

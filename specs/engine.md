@@ -411,8 +411,13 @@ playback state.
     (specs/api.md), or `null`. The core ignores a manifest that it cannot
     parse (only its debug log shows it), which costs P2P only; an exception
     from `processManifest` is reported, and the answer is `null`.
-  - `loadable(id, url, range)` and `config(id)` are `isSegmentLoadable` and
-    `getConfig`: queries, answered at once.
+  - `loadable(id, url, range)`, `config(id)`, `streams(id)`,
+    `stream(id, runtimeId)` and `hasSegment(id, url, range)` are
+    `isSegmentLoadable`, `getConfig`, `getStreams`, `getStream` and
+    `hasSegment`: queries, answered at once. A stream is the JS core's
+    snapshot, as the details of `onStreamAdded` give it.
+  - `dynamicConfig(config)` is `applyDynamicConfig`, with the JSON object
+    `config`; `manifestResponseUrl(url)` is `setManifestResponseUrl`.
   - `load(id, url, range)` is `loadSegment`: as in JS, a URL that the core
     does not know fails.
   - `abort(url, range)` is `abortSegmentLoading`; `destroy()` is `destroy`,
@@ -428,8 +433,8 @@ playback state.
 - **The answers,** from JS to Kotlin, one for each query and each load,
   through the natives and the client of `p2pml_engine_run` (`PlayerSink` in
   Kotlin):
-  - `playerValue(id, json)`: a query's value; with no core, `null` for a
-    manifest, `false` and `null`;
+  - `playerValue(id, json)`: a query's value; with no core, `false` for
+    `loadable` and `hasSegment`, and `null` for the others;
   - `playerData(id, bytes, bandwidth, main)`: the whole segment, copied once
     from its `ArrayBuffer` into a Kotlin `ByteArray` (`loadSegment` gives the
     segment at its end, not in parts), the bandwidth the core measured, and

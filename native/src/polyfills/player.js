@@ -10,6 +10,11 @@
 //   or the processed streams with liveDelay: where the core's liveDelayFor
 //   places a live player, with playerBufferFor and maxLiveLatencyFor of that
 //   placement, or null;
+// - streams(id), stream(id, runtimeId) and hasSegment(id, url, range):
+//   getStreams, getStream and hasSegment, answered at once in the same way;
+//   with no core, null, null and false;
+// - dynamicConfig(0, config): applyDynamicConfig, with `config` (JSON);
+// - manifestResponseUrl(0, url): setManifestResponseUrl;
 // - load(id, url, range): loadSegment, answered once, later, with
 //   playerData(id, bytes, bandwidth, main) or playerFail(id, type, message);
 // - abort(0, url, range): abortSegmentLoading;
@@ -213,6 +218,27 @@
 
     config(id) {
       playerValue(id, JSON.stringify(core?.getConfig() ?? null));
+    },
+
+    streams(id) {
+      playerValue(id, JSON.stringify(core?.getStreams() ?? null));
+    },
+
+    stream(id, runtimeId) {
+      playerValue(id, JSON.stringify(core?.getStream(runtimeId) ?? null));
+    },
+
+    hasSegment(id, url, range) {
+      const has = core !== undefined && core.hasSegment(url, rangeOf(range));
+      playerValue(id, JSON.stringify(has));
+    },
+
+    dynamicConfig(id, config) {
+      core?.applyDynamicConfig(JSON.parse(config));
+    },
+
+    manifestResponseUrl(id, url) {
+      core?.setManifestResponseUrl(url);
     },
 
     load(id, url, range) {

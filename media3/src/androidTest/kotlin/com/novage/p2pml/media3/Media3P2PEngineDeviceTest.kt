@@ -26,6 +26,7 @@ import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.test.platform.app.InstrumentationRegistry
 import com.novage.p2pml.core.Core
 import com.novage.p2pml.core.CoreEvent
+import com.novage.p2pml.core.DynamicCoreConfig
 import com.novage.p2pml.core.LiveDelay
 import com.novage.p2pml.core.PlaybackState
 import com.novage.p2pml.core.ProcessedManifest
@@ -351,6 +352,19 @@ class Media3P2PEngineDeviceTest {
         } finally {
             onLooper { player.release() }
         }
+    }
+
+    @Test
+    fun applyDynamicConfigChangesTheCoresSettings() {
+        // No core changes: nothing changes.
+        engine.applyDynamicConfig(DynamicMedia3P2PEngineConfig())
+        assertEquals(false, engine.getConfig().core.mainStream?.isP2PUploadDisabled, "the default")
+        engine.applyDynamicConfig(
+            DynamicMedia3P2PEngineConfig(DynamicCoreConfig().apply { isP2PUploadDisabled = true })
+        )
+        val main = assertNotNull(engine.getConfig().core.mainStream)
+        assertEquals(true, main.isP2PUploadDisabled)
+        assertEquals(0.0, main.httpDownloadTimeWindow, "a setting that it does not set")
     }
 
     // Completes [ready] at the first READY, and records a player error in [error] and [ready]; a

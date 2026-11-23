@@ -47,7 +47,7 @@ internal class CoreSession(private val port: PlayerPort) {
     }
 
     /**
-     * Query [name] (`loadable`, `config`, `manifest`): its JSON, or null when it is JSON null or it
+     * Query [name] (such as `loadable` or `config`): its JSON, or null when it is JSON null or it
      * failed (not taken, or the engine closed).
      *
      * @throws InterruptedIOException when the waiting thread is interrupted.

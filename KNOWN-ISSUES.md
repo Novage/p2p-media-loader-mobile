@@ -45,11 +45,10 @@ that describes the behaviour, not here.
   as x86: its first `JsEngine` throws `UnsatisfiedLinkError`, and each later
   one `NoClassDefFoundError`. `Core` then has no core: the player loads every
   request itself and plays without P2P (specs/api.md).
-- **The API is not complete.** `Core` does not have these calls of the JS
-  core: `applyDynamicConfig`, `setManifestResponseUrl`,
-  `hasSegment`, `getStream`, `getStreams`, and the DASH segment index
-  (`isSegmentIndex`, `processSegmentIndex`), and `Media3P2PEngine` has the
-  same gaps. There is no `:proxy` module (specs/api.md).
+- **The API is not complete.** `Core` does not have the DASH segment index
+  of the JS core (`isSegmentIndex`, `processSegmentIndex`), and its settings
+  do not have the JS settings that are functions (specs/api.md, "The
+  settings"). There is no `:proxy` module (specs/api.md).
 - **Media3 plays one item at a time through the engine.** Each source of
   `Media3P2PEngine` readies the core for itself when the player prepares it
   (specs/api.md, "Media3"). ExoPlayer prepares the next item of a playlist

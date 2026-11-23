@@ -6,6 +6,7 @@ import com.novage.p2pml.player.Answer
 import com.novage.p2pml.player.CoreSession
 import java.io.IOException
 import java.io.InterruptedIOException
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** A byte range of a segment, as the JS core's `ByteRange`: [start] to [end], inclusive. */
@@ -49,13 +50,16 @@ public class CoreRequestError(public val type: String, message: String) : IOExce
 
 /**
  * The P2P Media Loader core, with the JS core's calls, names and meanings (specs/api.md). A player
- * integration gives it every manifest and loads its segments through it. Any thread; the calls
- * block their thread for the answer, where JS returns a Promise, so call them off the main thread.
+ * integration gives it every manifest and loads its segments through it. Any thread. Each call that
+ * gives a value blocks its thread until the core's thread answers, also where JS answers at once
+ * (such as [getStreams] or [hasSegment]), so call them off the main thread.
  *
  * The core runs in a JS engine with a thread of its own: [close] ends it. Without the library's
  * native code (on 32-bit x86, see KNOWN-ISSUES.md), there is no core: no segment is loadable, and
  * the player loads every request itself.
  */
+// The JS core's calls, one function each.
+@Suppress("TooManyFunctions")
 public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEngine) :
     AutoCloseable {
     @JvmOverloads
@@ -114,6 +118,63 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
     public fun getConfig(): CoreConfig {
         val json = session.query("config")
         return CoreConfig().readFrom(json?.let(::JSONObject) ?: JSONObject(config).inConfigShape())
+    }
+
+    /**
+     * Changes the settings that the core can change while it runs, as the JS core's
+     * `applyDynamicConfig`: the set fields of [config] replace the core's values, for both stream
+     * types or for the one that [DynamicCoreConfig.mainStream] or
+     * [DynamicCoreConfig.secondaryStream] names. To go back to a default, set the default's value;
+     * the derived values of `urgentBufferThreshold` and `segmentMemoryStorageLimit` cannot come
+     * back (specs/api.md). With no core, and after [close], nothing changes.
+     *
+     * @throws org.json.JSONException when a number of [config] is not finite.
+     */
+    public fun applyDynamicConfig(config: DynamicCoreConfig) {
+        session.send("dynamicConfig", listOf(config.toJson().toString()))
+    }
+
+    /**
+     * The streams that the core registered, in the order of their registration, as the JS core's
+     * `getStreams()`. Empty with no core, and after [close].
+     *
+     * @throws InterruptedIOException when the waiting thread is interrupted.
+     */
+    @Throws(InterruptedIOException::class)
+    public fun getStreams(): List<Stream> {
+        val streams = session.query("streams")?.let(::JSONArray) ?: return emptyList()
+        return List(streams.length()) { index -> streams.getJSONObject(index).toStream() }
+    }
+
+    /**
+     * The stream [runtimeId] (for HLS, the media playlist's URL), as the JS core's `getStream`;
+     * null when the core did not register it, with no core, and after [close].
+     *
+     * @throws InterruptedIOException when the waiting thread is interrupted.
+     */
+    @Throws(InterruptedIOException::class)
+    public fun getStream(runtimeId: String): Stream? =
+        session.query("stream", listOf(runtimeId))?.let { JSONObject(it).toStream() }
+
+    /**
+     * Whether a stream that the core registered has segment [url], with its [byteRange] if it has
+     * one, as the JS core's `hasSegment`. False with no core, and after [close].
+     *
+     * @throws InterruptedIOException when the waiting thread is interrupted.
+     */
+    @JvmOverloads
+    @Throws(InterruptedIOException::class)
+    public fun hasSegment(url: String, byteRange: ByteRange? = null): Boolean =
+        session.query("hasSegment", listOf(url, byteRange?.text())) == "true"
+
+    /**
+     * Names the source's swarm by [url], without its query, in place of the first manifest's URL,
+     * as the JS core's `setManifestResponseUrl`: call it before the first [processManifest] of the
+     * source; a configured [CoreConfig.swarmId] string still wins. [destroy] forgets it. With no
+     * core, and after [close], it does nothing.
+     */
+    public fun setManifestResponseUrl(url: String) {
+        session.send("manifestResponseUrl", listOf(url))
     }
 
     /**

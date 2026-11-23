@@ -24,6 +24,7 @@ import com.novage.p2pml.core.Core
 import com.novage.p2pml.core.CoreConfig
 import com.novage.p2pml.core.CoreEvent
 import com.novage.p2pml.core.CoreEventListener
+import com.novage.p2pml.core.DynamicCoreConfig
 import com.novage.p2pml.core.LiveDelay
 import com.novage.p2pml.core.PlaybackState
 import com.novage.p2pml.core.ProcessedManifest
@@ -37,6 +38,17 @@ public class Media3P2PEngineConfig
 constructor(
     /** The core's settings. */
     public var core: CoreConfig = CoreConfig()
+)
+
+/**
+ * The changes of a [Media3P2PEngine]'s settings while it plays, as the web library's
+ * `DynamicHlsJsP2PEngineConfig`: for [Media3P2PEngine.applyDynamicConfig].
+ */
+public class DynamicMedia3P2PEngineConfig
+@JvmOverloads
+constructor(
+    /** The changes of the core's settings; null changes nothing. */
+    public var core: DynamicCoreConfig? = null
 )
 
 /**
@@ -135,6 +147,17 @@ internal constructor(
         if (main.isEmpty()) return
         if (main.none(ProcessedStream::isLive)) placement = null
         else manifest.liveDelay?.let { placement = it }
+    }
+
+    /**
+     * Changes the settings that the core can change while it plays, as
+     * `HlsJsP2PEngine.applyDynamicConfig`: see [Core.applyDynamicConfig]. For example, P2P off on a
+     * metered network.
+     *
+     * @throws org.json.JSONException when a number of [config] is not finite.
+     */
+    public fun applyDynamicConfig(config: DynamicMedia3P2PEngineConfig) {
+        config.core?.let(core::applyDynamicConfig)
     }
 
     /** The core's events, as `HlsJsP2PEngine.addEventListener`: see [Core.addEventListener]. */

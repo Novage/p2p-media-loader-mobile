@@ -29,11 +29,14 @@ As in the web library, an app uses an engine for its player, and the engine
 uses the core:
 
 - **The player's engine,** as the web library's `HlsJsP2PEngine`: it is made
-  with `{ core: CoreConfig }`, gives `getConfig()` and `destroy()`, and plugs
+  with `{ core: CoreConfig }`, gives `getConfig()`, `applyDynamicConfig()`
+  and `destroy()`, and plugs
   into the player. For Media3 it is `Media3P2PEngine`, in a module of its
   own (see "Media3").
 - **The core,** as the web library's `Core`: `Core(config)`, `getConfig()`,
-  `processManifest(url, requestedUrl, data)`,
+  `applyDynamicConfig(config)`, `setManifestResponseUrl(url)`,
+  `processManifest(url, requestedUrl, data)`, `getStreams()`,
+  `getStream(runtimeId)`, `hasSegment(url, byteRange)`,
   `isSegmentLoadable(url, byteRange)`, `loadSegment(url, byteRange)`,
   `abortSegmentLoading(url, byteRange)`, `updatePlayback(state)`,
   `addEventListener(event, listener)`, `removeEventListener(event, listener)`
@@ -45,8 +48,8 @@ uses the core:
   does not play). With no report, the core takes an empty buffer, and every
   request is urgent.
 
-The JS core's calls that `Core` does not have, such as
-`applyDynamicConfig`, are in KNOWN-ISSUES.md.
+The JS core's calls that `Core` does not have, the DASH segment index, are
+in KNOWN-ISSUES.md.
 
 ## The settings
 
@@ -56,17 +59,33 @@ meanings; `null` is "unset", the core's default, as an absent JS field.
 stream type. As in JS, `getConfig()` gives the common settings, and the
 stream settings of each stream type in `mainStream` and `secondaryStream`.
 
+`DynamicCoreConfig` and `DynamicStreamConfig`, for `applyDynamicConfig`,
+are the JS types of the same names: the settings that the core can change
+while it runs. As in JS, they do not have `announceTrackers` and `swarmId`
+(the swarm's name, which the core gives a stream when it registers it).
+`StreamConfig` extends `DynamicStreamConfig` with these two, so a
+`StreamConfig` given in place of a `DynamicStreamConfig` compiles;
+`applyDynamicConfig` does not send the two. Of a config given as
+`mainStream` or `secondaryStream`, only the stream settings apply. As in
+JS, `DynamicCoreConfig` has the common settings: `segmentMemoryStorageLimit`
+applies from the next segment storage that the core makes (at the first
+load, and at the first after `destroy()`), and `trackerClientVersionPrefix`
+does not apply.
+
 The settings that are functions in JS (`httpRequestSetup`,
-`validateP2PSegment`, `segmentFilter`, `streamIdBuilder`,
-`customSegmentStorageFactory`) are not in the API: a Kotlin function cannot
-run in the engine. As in JS, `httpErrorRetries` counts all the HTTP tries,
-not the retries after the first, so `0` makes the core load nothing over
-HTTP.
+`validateP2PSegment`, `segmentFilter`, `streamIdBuilder`, `swarmId` as a
+function, `customSegmentStorageFactory`) are not in the API: a Kotlin
+function cannot run in the engine (KNOWN-ISSUES.md). As in JS,
+`httpErrorRetries` counts all the HTTP tries, not the retries after the
+first, so `0` makes the core load nothing over HTTP.
 
 ## Where Kotlin differs from JS
 
-- **Blocking calls:** where JS returns a Promise, the Kotlin call blocks its
-  thread for the answer: a player's loading thread, never the engine's.
+- **Blocking calls:** each Kotlin call that gives a value blocks its thread
+  until the engine's thread answers, also where JS answers at once
+  (`getConfig`, `getStreams`, `getStream`, `hasSegment`,
+  `isSegmentLoadable`): call them from a player's loading thread or another
+  worker thread, never from the main thread or the engine's.
   `loadSegment` throws `CoreRequestError` (an `IOException`) with the JS
   error's `type`, `"failed"` or `"aborted"`, where JS rejects. An interrupt
   of the waiting thread aborts the load and throws `InterruptedIOException`;
@@ -84,8 +103,16 @@ HTTP.
   of that placement. JS exports these rules as functions for the adapters;
   here the core computes them, so that its rules have one source.
 - **`manifestParsers`** is not a setting: the core has the HLS parser.
-- **Java:** `getConfig`, `processManifest`, `isSegmentLoadable` and
-  `loadSegment` declare their exceptions (`InterruptedIOException`, and `IOException` for `loadSegment`),
+- **`applyDynamicConfig`** sends only the set fields: a `null` field is not
+  sent, and the core keeps its value. To go back to a default, set the
+  default's value. Two settings have no default value: in JS, when
+  `urgentBufferThreshold` and `segmentMemoryStorageLimit` are `undefined`,
+  the core derives them (from the live window, and from the platform).
+  JSON has no `undefined`, so after `applyDynamicConfig` sets one of them,
+  the core keeps a value until it closes.
+- **Java:** `getConfig`, `processManifest`, `isSegmentLoadable`,
+  `getStreams`, `getStream`, `hasSegment` and `loadSegment` declare their
+  exceptions (`InterruptedIOException`, and `IOException` for `loadSegment`),
   and the calls with defaults at the end have overloads (`@JvmOverloads`).
   `processManifest` has none: its overload would be `(url, data)`, which
   reads as `(url, requestedUrl)`; from Java, `requestedUrl` is null when there
@@ -116,8 +143,9 @@ HTTP.
 
 `Media3P2PEngine` (`:media3`) is the player's engine for Media3, as
 `HlsJsP2PEngine` is for HLS.js: `Media3P2PEngine(Media3P2PEngineConfig(core))`,
-`getConfig()`, `addEventListener`, `removeEventListener` and `destroy()` with
-their JS meanings (the events are its core's, as HlsJsP2PEngine's), and
+`getConfig()`, `applyDynamicConfig(DynamicMedia3P2PEngineConfig(core))`,
+`addEventListener`, `removeEventListener` and `destroy()` with their JS
+meanings (the events are its core's, as HlsJsP2PEngine's), and
 `close()`, which ends its core. `buildPlayer(context, builder, upstream)` is its counterpart
 of `getConfigForHlsJs()` and `bindHls()` together: one call, so that an app
 cannot set up a part of it only. On the app's `ExoPlayer.Builder` it sets the
@@ -235,5 +263,7 @@ On a device that cannot load the library's native code (32-bit x86, see
 KNOWN-ISSUES.md), `Core` has no core: no segment is loadable, `loadSegment`
 fails, and `getConfig()` gives the given settings, in the JS `getConfig()`
 shape (the common settings, and each stream type's own over the ones for
-both). Nothing says that P2P is off. The player loads every request itself,
+both). `getStreams()` is empty, `getStream` gives null, `hasSegment` gives
+false, and `applyDynamicConfig` and `setManifestResponseUrl` do nothing.
+Nothing says that P2P is off. The player loads every request itself,
 and plays without P2P.
