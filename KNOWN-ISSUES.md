@@ -58,18 +58,38 @@ that describes the behaviour, not here.
   on it is as much again (specs/api.md, "Functions in the settings"). A
   call for all the segments of a refresh at once would need a change in the
   web core, which asks for each segment.
-- **Media3 plays one item at a time through the engine.** Each source of
-  `Media3P2PEngine` readies the core for itself when the player prepares it
-  (specs/api.md, "Media3"). ExoPlayer prepares the next item of a playlist
-  when it starts to buffer it, before the current item ends, and every item
-  at once when lazy preparation is off; a preload (`DefaultPreloadManager`)
-  also prepares a source. The item that plays then loses its core: a seek
-  back in it loads without P2P, and the playlists of a live item mix into
-  the next item's swarm, so that the core's store of the item that plays
-  goes, and its later segments, some of them a second time, load over HTTP.
-  An app gives the player one item at a time, and does not preload through
-  the engine (specs/api.md, "Preload"). A fix gives the core to the source
-  that plays, not to the source that Media3 prepares.
+- **A preloaded item starts without the core.** The core serves the item
+  that plays (specs/api.md, "Media3"). An item that Media3 prepares ahead,
+  as a preload or the next item of a playlist, loads over HTTP until it
+  plays. A preloaded live item starts where Media3 places it, and the
+  core's placement applies from the hand-over, at its next playlist. The
+  first item gets the core on the player's thread, after Media3 prepares
+  its source: when that thread is busy, its first playlists load before the
+  hand-over, and a live item can start where Media3 places it.
+- **The engine finds a source by what its `MediaItem` loads.** Of two items
+  of one URL in one playlist, it can give the core to the other one's
+  source, whose loads then go over HTTP. A source of the app's own
+  (`setMediaSource`) for the URL of the engine's item that it replaces
+  keeps the core in that item's swarm until the item changes again. A fix needs a way to tell such
+  a source from a recovery, where Media3 prepares the engine's source again.
+- **A playlist can reach the core of the next item.** The engine gives a
+  playlist to the core when its source has the core. A playlist whose load
+  ends just when the current item changes can pass that check and reach
+  the next item's core, which then registers its streams; when it is the
+  first, it also names the next item's swarm, which then plays without P2P.
+  The hand-over (specs/api.md, "Media3") has the same window: the old
+  item's playlist that it gives can land after the next change, and a
+  playlist that the new item loads while its hand-over waits can reach the
+  core before the master. A kept live playlist that the hand-over gives
+  after a newer one that a loading thread gave makes the core drop the
+  newest segment, which loads over HTTP, until the next refresh. After a stop, such a playlist brings the core
+  back into the old item's swarm until the next item or `close()`. A fix
+  runs the core's change and the hand-over in one order, and holds a
+  source's playlists until its hand-over.
+- **A stop after an error keeps the core in its swarm.** `stop()` after a
+  player error leaves the player idle with the error, which the engine
+  takes for a recovery: the core stays until the next item, a clear of the
+  items, a release of the player, or `close()`.
 - **The core does not use Media3's `upstream` for its segments.** A cache
   (`CacheDataSource`), a URL signer (`ResolvingDataSource`) or request
   headers in `upstream` apply to the playlists, keys and the segments that
@@ -82,31 +102,6 @@ that describes the behaviour, not here.
   item fails, and the factory does not add what `DefaultMediaSourceFactory`
   adds to an item, such as side-loaded subtitles, clipping and ads. DASH is
   in the scope (specs/scope.md) and not done.
-- **A released Media3 source's playlist can reach the next source's core.**
-  When the app gives the player a new item, Media3 prepares the new source,
-  which readies the core, before it releases the old one. A playlist of the
-  old source that arrives in that time reaches the core, which registers its
-  streams; with no `swarmId`, it can name the swarm. The new item then
-  plays without P2P for that session. A live playlist of the old source can
-  also set the engine's live placement, which then holds the new item's
-  forward buffer (specs/api.md, "Media3") until its own playlists place it
-  again, or for good when the core does not get them, such as a local
-  playlist's. The engine drops a playlist whose load Media3 cancelled, but
-  not one that ends before the release. A fix ties each data source to its
-  own source.
-- **A source of the app's own leaves the core in its swarm.** When the app
-  gives the engine's player a source that is not the engine's (DASH, a
-  progressive file) with no stop, Media3 releases the engine's source, but
-  the core keeps its streams, segments and peers until the next engine source
-  or `close()`. A `destroy()` at the release would also drop the core that a
-  recovery after an error keeps (Media3 releases and prepares the same source
-  then), so a fix must tell the two apart.
-- **A stop can leave the core in its swarm.** `stop()` after an error keeps
-  the core, because the error stays set. The engine readies the core on the
-  application thread when the player stops, and the playback thread releases
-  the source after it: a live playlist that arrives in that time, and then a
-  segment request of the same source, bring the core back into the swarm
-  until the next source or `close()`.
 - **The bandwidth estimate can stay at an old value.** After the core gives
   one bandwidth, the meter keeps its last value: when every later load fails
   in the core and goes to `upstream`, the estimate does not follow the

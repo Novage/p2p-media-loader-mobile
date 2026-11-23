@@ -26,6 +26,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -93,8 +94,9 @@ class DataSourcesDeviceTest {
             start()
         }
     private val core = Core(testConfig())
+    private val link = TestLink()
     private val factory =
-        P2pHlsDataSourceFactory(core, DefaultHttpDataSource.Factory().setUserAgent(UPSTREAM))
+        P2pHlsDataSourceFactory(core, DefaultHttpDataSource.Factory().setUserAgent(UPSTREAM), link)
 
     @AfterTest
     fun stop() {
@@ -151,11 +153,31 @@ class DataSourcesDeviceTest {
     }
 
     @Test
+    fun aSourceWithoutTheCoreKeepsItsPlaylistsAndLoadsFromUpstream() {
+        link.isServed = false
+        read(C.DATA_TYPE_MANIFEST, "/r/media.m3u8")
+        assertEquals(emptyList(), core.getStreams(), "not for the core")
+        // Kept for a hand-over, by the URL asked for, with its URL after the redirect.
+        val kept = assertNotNull(link.kept[url("/r/media.m3u8")])
+        assertEquals(url("/hls/media.m3u8"), kept.url)
+        assertEquals(url("/r/media.m3u8"), kept.requestedUrl)
+        assertEquals(MEDIA, kept.text)
+        // The core knows the segment, from when the source had it.
+        link.isServed = true
+        giveManifests()
+        link.isServed = false
+        read(C.DATA_TYPE_MEDIA, "/hls/seg0.ts")
+        assertEquals(listOf<String?>(UPSTREAM), agentsOf("/hls/seg0.ts"), "upstream only")
+    }
+
+    @Test
     fun aPlaylistIsAskedForWhole() {
         read(C.DATA_TYPE_MANIFEST, "/hls/media.m3u8?_HLS_msn=5&_HLS_skip=YES&a=b%20c")
         val queries = requests.filter { it.path == "/hls/media.m3u8" }.map { it.query }
         assertEquals(listOf<String?>("_HLS_msn=5&a=b%20c"), queries)
         assertTrue(core.isSegmentLoadable(url("/hls/seg0.ts")))
+        // Kept with no parameters of a blocking reload: each reload replaces the last.
+        assertEquals(setOf(url("/hls/media.m3u8?a=b%20c")), link.kept.keys)
     }
 
     @Test
@@ -176,7 +198,7 @@ class DataSourcesDeviceTest {
         val playlist = File(context.cacheDir, "local.m3u8").apply { writeText(MEDIA) }
         try {
             val source =
-                P2pHlsDataSourceFactory(core, DefaultDataSource.Factory(context))
+                P2pHlsDataSourceFactory(core, DefaultDataSource.Factory(context), link)
                     .createDataSource(C.DATA_TYPE_MANIFEST)
             try {
                 source.open(DataSpec(Uri.fromFile(playlist)))

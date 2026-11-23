@@ -15,38 +15,61 @@ import com.novage.p2pml.core.CoreRequestError
 import com.novage.p2pml.core.ProcessedManifest
 import java.io.ByteArrayInputStream
 
+/** A playlist as it came: its URL after redirects, the URL asked for when it differs, its text. */
+internal class Playlist(val url: String, val requestedUrl: String?, val text: String)
+
+/** Gives [playlist] to the core: see [Core.processManifest]. */
+internal fun Core.processManifest(playlist: Playlist): ProcessedManifest? =
+    processManifest(playlist.url, playlist.requestedUrl, playlist.text)
+
 /**
- * The data sources of HLS: the playlists go through [ManifestDataSource], the segments through
- * [SegmentDataSource], and every other request to [upstream] untouched (a whitelist, as the web
- * adapters'), such as keys and steering manifests. [onManifest] gets what the core made of each
- * playlist.
+ * What the data sources of one media source know of it (`Media3P2PEngine`'s sources): whether it
+ * has the core, which only then gets its playlists and loads its segments, and where its playlists
+ * go.
+ */
+internal interface SourceLink {
+    val isServed: Boolean
+
+    /**
+     * Keeps [playlist], which the player asked for as [key] (with no blocking reload parameters),
+     * for the source's hand-over.
+     */
+    fun keep(key: String, playlist: Playlist)
+
+    /** What the core made of a playlist of the source. */
+    fun onManifest(manifest: ProcessedManifest)
+}
+
+/**
+ * The data sources of one HLS source: the playlists go through [ManifestDataSource], the segments
+ * through [SegmentDataSource], and every other request to [upstream] untouched (a whitelist, as the
+ * web adapters'), such as keys and steering manifests.
  */
 @OptIn(UnstableApi::class)
 internal class P2pHlsDataSourceFactory(
     private val core: Core,
     private val upstream: DataSource.Factory,
-    private val onManifest: (ProcessedManifest) -> Unit = {},
+    private val link: SourceLink,
 ) : HlsDataSourceFactory {
     override fun createDataSource(dataType: Int): DataSource =
         when (dataType) {
-            C.DATA_TYPE_MANIFEST ->
-                ManifestDataSource(core, upstream.createDataSource(), onManifest)
-            C.DATA_TYPE_MEDIA -> SegmentDataSource(core, upstream.createDataSource())
+            C.DATA_TYPE_MANIFEST -> ManifestDataSource(core, upstream.createDataSource(), link)
+            C.DATA_TYPE_MEDIA -> SegmentDataSource(core, upstream.createDataSource(), link)
             else -> upstream.createDataSource()
         }
 }
 
 /**
- * Loads a playlist through [upstream] and gives it to the core, as HLS.js's engine does: with its
- * URL after redirects, which its URIs resolve against, and the URL that the player asked for.
- * [onManifest] gets what the core made of it. Media3 reports no transfer of a playlist to its
- * bandwidth meter, so neither does this.
+ * Loads a playlist through [upstream], keeps it in its source ([link]), and gives it to the core
+ * when the source has it, as HLS.js's engine does: with its URL after redirects, which its URIs
+ * resolve against, and the URL that the player asked for. The link gets what the core made of it.
+ * Media3 reports no transfer of a playlist to its bandwidth meter, so neither does this.
  */
 @OptIn(UnstableApi::class)
 internal class ManifestDataSource(
     private val core: Core,
     private val upstream: DataSource,
-    private val onManifest: (ProcessedManifest) -> Unit,
+    private val link: SourceLink,
 ) : DataSource {
     private var data: ByteArrayInputStream? = null
     private var uri: Uri? = null
@@ -69,14 +92,16 @@ internal class ManifestDataSource(
                 DataSourceUtil.closeQuietly(upstream)
             }
         val url = uri.toString()
-        val requestedUrl = request.uri.toString().takeIf { it != url }
-        val text = String(bytes, Charsets.UTF_8)
-        // Media3 interrupts the thread of a load that it cancels, as at a source's release. Such a
-        // playlist must not reach the core, which may already serve the next source. The core
-        // loads over HTTP only, so a local playlist (a file, an asset) is not for it.
-        val forCore =
-            !Thread.currentThread().isInterrupted && uri?.scheme?.lowercase() in HTTP_SCHEMES
-        if (forCore) core.processManifest(url, requestedUrl, text)?.let(onManifest)
+        val asked = request.uri.toString()
+        val playlist = Playlist(url, asked.takeIf { it != url }, String(bytes, Charsets.UTF_8))
+        // Media3 interrupts the thread of a load that it cancels, as at a source's release. The
+        // core loads over HTTP only, so a local playlist (a file, an asset) is not for it.
+        if (!Thread.currentThread().isInterrupted && uri?.scheme?.lowercase() in HTTP_SCHEMES) {
+            // Kept before the check: a hand-over that starts after the check has it. Each blocking
+            // reload of LL-HLS asks for a new `_HLS_msn` and `_HLS_part`: one key keeps the latest.
+            link.keep(request.uri.without(BLOCKING_RELOAD).toString(), playlist)
+            if (link.isServed) core.processManifest(playlist)?.let(link::onManifest)
+        }
         data = ByteArrayInputStream(bytes)
         return bytes.size.toLong()
     }
@@ -96,8 +121,8 @@ internal class ManifestDataSource(
 }
 
 /**
- * Loads a segment through the core when the core knows it, and else through [upstream], as the web
- * adapters' segment loaders.
+ * Loads a segment through the core when its source has the core ([link]) and the core knows it, and
+ * else through [upstream], as the web adapters' segment loaders.
  *
  * The engine's bandwidth meter gets the core's bandwidth for a segment from the core. Other
  * listeners see the transfer from the start of the core's wait. Not
@@ -105,8 +130,11 @@ internal class ManifestDataSource(
  * its own transfers.
  */
 @OptIn(UnstableApi::class)
-internal class SegmentDataSource(private val core: Core, private val upstream: DataSource) :
-    DataSource {
+internal class SegmentDataSource(
+    private val core: Core,
+    private val upstream: DataSource,
+    private val link: SourceLink,
+) : DataSource {
     private val listeners = mutableListOf<TransferListener>()
     // The meter's listeners, which take the core's bandwidth for its segments in place of the
     // clock.
@@ -134,7 +162,7 @@ internal class SegmentDataSource(private val core: Core, private val upstream: D
         // upstream can fail in a read: the core gives the whole segment in open.
         val resumed = range == null && dataSpec.position != 0L
         val bytes =
-            if (resumed || !core.isSegmentLoadable(url, range)) null
+            if (resumed || !link.isServed || !core.isSegmentLoadable(url, range)) null
             else loadThroughCore(dataSpec, url, range)
         if (bytes == null) {
             upstreamOpen = true
@@ -204,6 +232,12 @@ internal class SegmentDataSource(private val core: Core, private val upstream: D
 
 private val HTTP_SCHEMES = setOf("http", "https")
 
+// The query parameters of an LL-HLS blocking reload.
+private val BLOCKING_RELOAD = setOf("_HLS_msn", "_HLS_part")
+
+// The query parameter of an HLS delta update.
+private val DELTA_UPDATE = setOf("_HLS_skip")
+
 /**
  * The request without `_HLS_skip`. Media3 asks for a delta update when the server offers one, and
  * the core reads a playlist as a whole one: it would number the segments of a delta wrongly. The
@@ -212,11 +246,16 @@ private val HTTP_SCHEMES = setOf("http", "https")
  */
 @OptIn(UnstableApi::class)
 private fun DataSpec.withoutDeltaUpdate(): DataSpec {
-    val params = uri.encodedQuery?.split('&').orEmpty()
-    val kept = params.filterNot { it.substringBefore('=') == "_HLS_skip" }
+    val whole = uri.without(DELTA_UPDATE)
+    return if (whole === uri) this else buildUpon().setUri(whole).build()
+}
+
+/** The URI without the query parameters [names], or this URI when it has none of them. */
+private fun Uri.without(names: Set<String>): Uri {
+    val params = encodedQuery?.split('&').orEmpty()
+    val kept = params.filterNot { it.substringBefore('=') in names }
     if (kept.size == params.size) return this
-    val query = kept.joinToString("&").ifEmpty { null }
-    return buildUpon().setUri(uri.buildUpon().encodedQuery(query).build()).build()
+    return buildUpon().encodedQuery(kept.joinToString("&").ifEmpty { null }).build()
 }
 
 /**

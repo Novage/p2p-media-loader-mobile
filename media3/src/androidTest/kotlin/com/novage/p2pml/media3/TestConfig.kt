@@ -9,6 +9,8 @@ import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.source.SinglePeriodTimeline
 import com.novage.p2pml.core.CoreConfig
 import com.novage.p2pml.core.LiveDelay
+import com.novage.p2pml.core.ProcessedManifest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertTrue
 
@@ -66,6 +68,18 @@ internal fun testConfig() =
         announceTrackers = emptyList()
         swarmId = "media3-test"
     }
+
+// The link of a test's data sources: their media source has the core while [isServed]; it keeps
+// the playlists that it gets.
+internal class TestLink(@Volatile override var isServed: Boolean = true) : SourceLink {
+    val kept = ConcurrentHashMap<String, Playlist>()
+
+    override fun keep(key: String, playlist: Playlist) {
+        kept[key] = playlist
+    }
+
+    override fun onManifest(manifest: ProcessedManifest) = Unit
+}
 
 // Waits until [condition] is true, for TIMEOUT_SECONDS at most.
 internal fun awaitUntil(what: String, condition: () -> Boolean) {

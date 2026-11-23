@@ -201,34 +201,58 @@ player.release()
 engine.close()
 ```
 
-- **Playlists:** they load through `upstream`, and the core gets each one,
-  with its URL after redirects, which its URIs resolve against, and the URL
+- **Playlists:** they load through `upstream`, and the core gets each one of
+  the source that it serves (see below), with its URL after redirects, which its URIs resolve against, and the URL
   that the player asked for, as the HLS.js engine gives them. The engine
   asks for each playlist whole: it removes `_HLS_skip` from the request,
   because the core reads a delta update as a whole playlist and would number
   its segments wrongly. The playlist of a load that Media3 cancelled, such as
   one of a source that it released, does not reach the core.
-- **Segments:** a segment that the core knows (`isSegmentLoadable`, with the
-  request's byte range) loads through the core. Every other segment request,
+- **Segments:** a segment of the source that the core serves, which the core
+  knows (`isSegmentLoadable`, with the request's byte range), loads through
+  the core. Every other segment request,
   such as an init segment or an LL-HLS part, loads through `upstream`. A
   segment that the core loads does not go through `upstream`: a cache or a
   URL signer in `upstream` does not see it (KNOWN-ISSUES.md).
 - **Other requests,** such as keys and steering manifests, go to `upstream`
   untouched: the engine handles playlists and segments only.
-- **A new source:** each HLS source of the player readies the core for itself
-  (`destroy()`) when the player prepares it, before it loads its first
-  playlist, as the HLS.js engine does when a source loads. After an error,
-  Media3 releases the source and prepares it again: the source keeps the
-  core, as the HLS.js engine keeps its core when it recovers. The core
-  recovers on its own, and falls back to HTTP where it must; a case that it
-  cannot recover from is a defect of the core. An engine serves one player,
-  and plays one item at a time (KNOWN-ISSUES.md).
+- **The item that plays has the core:** the core serves the engine's source
+  of the player's current item, as the HLS.js engine readies its core for
+  the source that it plays. Media3 prepares sources ahead of their items:
+  the next item of a playlist, every item when lazy preparation is off, and
+  a preload. Such a source loads its playlists and segments through
+  `upstream`, and keeps its playlists. When its item becomes the current
+  one (a transition, a seek to it), the engine readies the core
+  (`destroy()`), and gives it the source's kept playlists on a thread of
+  its own (`p2pml-handover`): the core then knows the item's streams and
+  segments at once, with no new playlist load, also for an item that the
+  player has buffered to its end. The source of the item that played no
+  longer reaches the core: its late playlists go to `upstream` only. An
+  item whose source is not the engine's (`setMediaSource` of the app's own)
+  has no core. After an error, Media3 releases the source and prepares it
+  again: the source keeps the core, as the HLS.js engine keeps its core
+  when it recovers. The core recovers on its own, and falls back to HTTP
+  where it must; a case that it cannot recover from is a defect of the
+  core. An engine serves one player.
+- **A swarm for each item:** a configured `swarmId` string names every item's
+  swarm, so a playlist needs `swarmIdFunction`, which the core calls for
+  each item: the same item gives every viewer the same ID, such as the
+  app's own ID of the item.
+
+  ```kotlin
+  // Each item has a mediaId of its own: MediaItem.fromUri gives none.
+  val idsByUrl = items.associate { it.localConfiguration!!.uri.toString() to it.mediaId }
+  CoreConfig().apply {
+      // The URL names the swarm of an item that is not in the map.
+      swarmIdFunction = SwarmIdFunction { idsByUrl[it.requestedUrl] ?: it.manifestUrl }
+  }
+  ```
+
 - **Preload:** for the best P2P ratio, an app does not preload through the
-  engine: no `DefaultPreloadManager` and no `setPreloadConfiguration`, keep
-  lazy preparation on (the default), and give the player one item at a time
-  where a short gap between items is acceptable. A preload plays, but the
-  segments of a preloaded item load over HTTP until it plays, and today it
-  also takes the core from the item that plays (KNOWN-ISSUES.md).
+  engine: no `DefaultPreloadManager` and no `setPreloadConfiguration`. A
+  preload plays, but a preloaded item loads over HTTP until it plays. The
+  next item of a playlist, which Media3 prepares before the current one
+  ends, loads its first playlists and segments over HTTP in the same way.
 - **The playback state:** the engine reports it to the core
   (`updatePlayback`) on each change of the player's state, play, pause,
   seek, speed and timeline, after each chunk that the player loads, and once
@@ -238,9 +262,11 @@ engine.close()
   state on its application thread only.
 - **A stop:** when the app stops the player (`STATE_IDLE` with no error) or
   clears its items, the engine readies the core (`destroy()`), so that it
-  leaves its swarm, as the HLS.js engine's core when it is destroyed. The
-  next source that the player prepares readies it again. An error also
-  makes the player idle; the core stays for the recovery.
+  leaves its swarm, as the HLS.js engine's core when it is destroyed. A
+  prepare gives it to the current item's source again. An error also makes
+  the player idle; the core stays for the recovery, until the app prepares
+  the player again. A stop, a clear of the items and a release of the player
+  take it out, also after an error (KNOWN-ISSUES.md).
 - **Live placement:** a live player plays where the core's `liveDelayFor`
   places it, as the web adapters place theirs: as deep in the live window as
   the window allows, so that the segments between the player and the live

@@ -3,6 +3,7 @@ package com.novage.p2pml.media3
 import android.os.Handler
 import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -15,9 +16,10 @@ import com.novage.p2pml.core.PlaybackState
 
 /**
  * Watches [player] for the core, as the web adapters watch their media element: it [report]s the
- * playback state on each change, after each loaded chunk and once a second, and tells [onStop] when
- * the app stops the player. Media3 gives the player's state on its application thread only, and has
- * no event when the buffer grows: Media3's own controls also read it on a timer.
+ * playback state on each change, after each loaded chunk and once a second, and tells [onCurrent]
+ * which item the core is for: the current item, or none when the app stops the player or clears its
+ * items. Media3 gives the player's state on its application thread only, and has no event when the
+ * buffer grows: Media3's own controls also read it on a timer.
  *
  * Once a second, and when the app plays, it also moves a live player that falls too far behind the
  * live edge, such as after a long pause, back to its [placement], as HLS.js does at its maximum
@@ -29,10 +31,11 @@ import com.novage.p2pml.core.PlaybackState
 internal class PlayerWatch(
     private val player: ExoPlayer,
     private val report: (PlaybackState) -> Unit,
-    onStop: () -> Unit,
+    private val onCurrent: (MediaItem?) -> Unit,
     private val placement: () -> LiveDelay?,
 ) {
     private val handler = Handler(player.applicationLooper)
+    private val checkNow = Runnable(::checkCurrent)
 
     private val tick =
         object : Runnable {
@@ -48,19 +51,16 @@ internal class PlayerWatch(
             override fun onPlaybackStateChanged(
                 eventTime: AnalyticsListener.EventTime,
                 state: Int,
-            ) {
-                // An error also makes the player idle, and the app prepares the player again, or,
-                // for BEHIND_LIVE_WINDOW, this watch does: the core stays for that recovery.
-                // A stop has no error. A stop inside another callback comes after the calls that
-                // follow it: a prepare after it has readied the core.
-                val stopped = player.playbackState == Player.STATE_IDLE
-                if (state == Player.STATE_IDLE && stopped && player.playerError == null) onStop()
-            }
+            ) = checkCurrent()
 
-            // With no item, the player has released its source: as a stop.
-            override fun onTimelineChanged(eventTime: AnalyticsListener.EventTime, reason: Int) {
-                if (player.currentTimeline.isEmpty) onStop()
-            }
+            override fun onTimelineChanged(eventTime: AnalyticsListener.EventTime, reason: Int) =
+                checkCurrent()
+
+            override fun onMediaItemTransition(
+                eventTime: AnalyticsListener.EventTime,
+                mediaItem: MediaItem?,
+                reason: Int,
+            ) = checkCurrent()
 
             override fun onEvents(player: Player, events: AnalyticsListener.Events) {
                 if (STATE_EVENTS.any(events::contains)) reportNow()
@@ -90,9 +90,11 @@ internal class PlayerWatch(
                 error: PlaybackException,
             ) = recoverFrom(error)
 
-            // A released player has no state to report.
+            // A released player has no state to report, and no item: the core leaves its swarm,
+            // also after an error, which a released player never recovers from.
             override fun onPlayerReleased(eventTime: AnalyticsListener.EventTime) {
                 handler.removeCallbacks(tick)
+                onCurrent(null)
             }
         }
 
@@ -106,8 +108,24 @@ internal class PlayerWatch(
     fun stop() {
         handler.post {
             handler.removeCallbacks(tick)
+            handler.removeCallbacks(checkNow)
             player.removeAnalyticsListener(listener)
         }
+    }
+
+    /** Checks the current item again on the player's thread, from any thread: a source changed. */
+    fun check() {
+        handler.post(checkNow)
+    }
+
+    // The item that the core is for. A stop (idle with no error) and no item: none. An error also
+    // makes the player idle, and the app prepares the player again, or, for BEHIND_LIVE_WINDOW,
+    // this watch does: the current item keeps the core for that recovery, while Media3 has its
+    // source released. The state is the player's now, not the event's: a stop inside another
+    // callback comes after the calls that follow it.
+    private fun checkCurrent() {
+        val stopped = player.playbackState == Player.STATE_IDLE && player.playerError == null
+        onCurrent(if (stopped) null else player.currentMediaItem)
     }
 
     /**

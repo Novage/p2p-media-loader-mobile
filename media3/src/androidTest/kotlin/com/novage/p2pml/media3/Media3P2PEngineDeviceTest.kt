@@ -39,6 +39,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -57,12 +58,15 @@ import mockwebserver3.RecordedRequest
 @OptIn(UnstableApi::class)
 class Media3P2PEngineDeviceTest {
     private val bMasters = AtomicInteger()
+    private val eMedia = AtomicInteger()
+    // The path of each request, in order.
+    private val requests = ConcurrentLinkedQueue<String>()
     private val server =
         MockWebServer().apply {
             dispatcher =
                 object : Dispatcher() {
                     override fun dispatch(request: RecordedRequest): MockResponse =
-                        when (request.url.encodedPath) {
+                        when (request.url.encodedPath.also { requests += it }) {
                             "/a/master.m3u8" -> MockResponse.Builder().body(MASTER).build()
                             // The second time, longer than any test waits: the core has only what
                             // it kept.
@@ -78,6 +82,16 @@ class Media3P2PEngineDeviceTest {
                             "/b/media.m3u8" -> MockResponse.Builder().body(MEDIA).build()
                             "/c/master.m3u8" -> MockResponse.Builder().body(MASTER).build()
                             "/c/media.m3u8" -> MockResponse.Builder().body(LIVE_MEDIA).build()
+                            // Live, and its refreshes cannot be read (nor its segments found): a
+                            // player error.
+                            "/e/master.m3u8" -> MockResponse.Builder().body(MASTER).build()
+                            "/e/media.m3u8" ->
+                                MockResponse.Builder()
+                                    .body(
+                                        if (eMedia.incrementAndGet() == 1) LIVE_MEDIA
+                                        else "not a playlist"
+                                    )
+                                    .build()
                             else -> MockResponse.Builder().code(NOT_FOUND).build()
                         }
                 }
@@ -146,7 +160,7 @@ class Media3P2PEngineDeviceTest {
     }
 
     @Test
-    fun eachSourceReadiesTheCoreForItself() {
+    fun theCoreServesTheSourceOfTheCurrentItem() {
         // Through a chained setter, as an app may give it to the player.
         val factory =
             engine
@@ -154,28 +168,202 @@ class Media3P2PEngineDeviceTest {
                 .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy())
         val caller = MediaSource.MediaSourceCaller { _, _ -> }
         val meter = DefaultBandwidthMeter.Builder(context).build()
-        val sources =
-            listOf("/a/master.m3u8", "/b/master.m3u8").map { path ->
-                factory.createMediaSource(MediaItem.fromUri(url(path)))
-            }
+        val items = listOf("/a/master.m3u8", "/b/master.m3u8").map { MediaItem.fromUri(url(it)) }
+        val sources = items.map(factory::createMediaSource)
         val prepared = sources.toMutableList()
         try {
-            onLooper { sources[0].prepareSource(caller, PlayerId.UNSET, meter) }
+            // Prepared ahead, as a playlist's next item: no source has the core yet.
+            onLooper { sources.forEach { it.prepareSource(caller, PlayerId.UNSET, meter) } }
+            awaitUntil("both media playlists") {
+                listOf("/a/media.m3u8", "/b/media.m3u8").all(requests::contains)
+            }
+            assertEquals(emptyList(), core.getStreams(), "no current item")
+            engine.serveItem(items[0])
             awaitLoadable(url("/a/seg0.ts"))
-            onLooper { sources[1].prepareSource(caller, PlayerId.UNSET, meter) }
+            assertFalse(core.isSegmentLoadable(url("/b/seg0.ts")), "not the current item's")
+            // The next item: from the playlists that its source keeps, with no new load.
+            val loads = requests.size
+            engine.serveItem(items[1])
             awaitLoadable(url("/b/seg0.ts"))
-            assertFalse(core.isSegmentLoadable(url("/a/seg0.ts")), "the first source is gone")
-            // As after an error: Media3 releases the sources, and prepares them again.
-            onLooper { sources.forEach { it.releaseSource(caller) } }
-            prepared.clear()
+            assertFalse(core.isSegmentLoadable(url("/a/seg0.ts")), "the last item is gone")
+            assertEquals(loads, requests.size, "no new load")
+            // As after an error: Media3 releases the source; until it prepares it again, the
+            // current item keeps the core.
+            onLooper { sources[1].releaseSource(caller) }
+            prepared -= sources[1]
+            engine.serveItem(items[1])
             assertTrue(core.isSegmentLoadable(url("/b/seg0.ts")), "a release keeps the core")
-            onLooper { sources[1].prepareSource(caller, PlayerId.UNSET, meter) }
-            prepared += sources[1]
-            assertTrue(core.isSegmentLoadable(url("/b/seg0.ts")), "a new prepare keeps the core")
+            // A stop, then an item that is not the engine's.
+            engine.serveItem(null)
+            awaitUntil("a stop takes the core") { !core.isSegmentLoadable(url("/b/seg0.ts")) }
+            engine.serveItem(items[0])
+            awaitLoadable(url("/a/seg0.ts"))
+            engine.serveItem(MediaItem.fromUri(url("/other.mp4")))
+            awaitUntil("another item takes it") { !core.isSegmentLoadable(url("/a/seg0.ts")) }
         } finally {
             // Its failure must not hide the test's.
             runCatching { onLooper { prepared.forEach { it.releaseSource(caller) } } }
         }
+    }
+
+    @Test
+    fun aSourceCanChangeAfterTheClose() {
+        val item = MediaItem.fromUri(url("/a/master.m3u8"))
+        val source =
+            engine.mediaSourceFactory(DefaultHttpDataSource.Factory()).createMediaSource(item)
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        onLooper {
+            source.prepareSource(
+                caller,
+                PlayerId.UNSET,
+                DefaultBandwidthMeter.Builder(context).build(),
+            )
+        }
+        try {
+            engine.close()
+            // As the player's thread after the close: no throw.
+            engine.serveItem(item)
+        } finally {
+            onLooper { source.releaseSource(caller) }
+        }
+    }
+
+    @Test
+    fun anItemReplacedInPlaceKeepsTheCore() {
+        val item = MediaItem.fromUri(url("/a/master.m3u8"))
+        val player = onLooper {
+            engine
+                .buildPlayer(
+                    context,
+                    ExoPlayer.Builder(context).setLooper(looper.looper),
+                    DefaultHttpDataSource.Factory(),
+                )
+                .apply {
+                    setMediaItem(item)
+                    prepare()
+                }
+        }
+        try {
+            awaitLoadable(url("/a/seg0.ts"))
+            // Media3 keeps the source of an item with another tag, and updates its item.
+            onLooper { player.replaceMediaItem(0, item.buildUpon().setTag("other").build()) }
+            // The events that the call left, and the playback thread's update of the source.
+            repeat(STAYS_CHECKS) {
+                onLooper {}
+                assertTrue(core.isSegmentLoadable(url("/a/seg0.ts")), "the core stays")
+                Thread.sleep(STAYS_STEP_MS)
+            }
+        } finally {
+            onLooper { player.release() }
+        }
+    }
+
+    @Test
+    fun anAppsLockOnTheEngineDoesNotBlockIt() {
+        val done = CompletableFuture<Unit>()
+        val worker = thread {
+            runCatching {
+                engine.serveItem(null)
+                engine.destroy()
+            }
+            done.complete(Unit)
+        }
+        // As app code that holds the engine's monitor while the player's thread changes items.
+        val unblocked =
+            synchronized(engine) {
+                runCatching { done.get(TIMEOUT_SECONDS, TimeUnit.SECONDS) }.isSuccess
+            }
+        // Out of the lock: a blocked worker ends before the engine closes.
+        worker.join()
+        assertTrue(unblocked, "the engine does not wait for the app's lock")
+    }
+
+    // Lazy preparation off: Media3 prepares the second item while the first plays.
+    @Test
+    fun aPlaylistGivesTheCoreToTheItemThatPlays() {
+        val items = listOf("/b/master.m3u8", "/a/master.m3u8").map { MediaItem.fromUri(url(it)) }
+        val player = onLooper {
+            engine
+                .buildPlayer(
+                    context,
+                    ExoPlayer.Builder(context)
+                        .setLooper(looper.looper)
+                        .setUseLazyPreparation(false),
+                    DefaultHttpDataSource.Factory(),
+                )
+                .apply {
+                    setMediaItems(items)
+                    prepare()
+                }
+        }
+        try {
+            // The second item's master can be asked for again after the stop: b's cannot.
+            awaitLoadable(url("/b/seg0.ts"))
+            awaitUntil("the second item prepared") { "/a/media.m3u8" in requests }
+            assertFalse(core.isSegmentLoadable(url("/a/seg0.ts")), "the first item keeps the core")
+            assertEquals(listOf(url("/b/media.m3u8")), core.getStreams().map { it.runtimeId })
+            onLooper { player.seekTo(1, 0) }
+            awaitLoadable(url("/a/seg0.ts"))
+            assertFalse(core.isSegmentLoadable(url("/b/seg0.ts")), "the first item left")
+            // A stop takes the core out; a prepare gives it back.
+            onLooper { player.stop() }
+            awaitUntil("the stop") { !core.isSegmentLoadable(url("/a/seg0.ts")) }
+            onLooper { player.prepare() }
+            awaitLoadable(url("/a/seg0.ts"))
+        } finally {
+            onLooper { player.release() }
+        }
+    }
+
+    // A player of the live item /e, once its refresh failed: the core still has the item.
+    private fun erroredPlayer(): ExoPlayer {
+        val error = CompletableFuture<PlaybackException>()
+        val player = onLooper {
+            engine
+                .buildPlayer(
+                    context,
+                    ExoPlayer.Builder(context).setLooper(looper.looper),
+                    DefaultHttpDataSource.Factory(),
+                )
+                .apply {
+                    addListener(
+                        object : Player.Listener {
+                            override fun onPlayerError(playerError: PlaybackException) {
+                                error.complete(playerError)
+                            }
+                        }
+                    )
+                    setMediaItem(MediaItem.fromUri(url("/e/master.m3u8")))
+                    prepare()
+                }
+        }
+        try {
+            awaitLoadable(url("/e/seg0.ts"))
+            error.get(TIMEOUT_SECONDS * 2, TimeUnit.SECONDS)
+            assertTrue(core.isSegmentLoadable(url("/e/seg0.ts")), "an error keeps the core")
+        } catch (failure: Throwable) {
+            onLooper { player.release() }
+            throw failure
+        }
+        return player
+    }
+
+    @Test
+    fun aClearAfterAnErrorTakesTheCoreOut() {
+        val player = erroredPlayer()
+        try {
+            onLooper { player.clearMediaItems() }
+            awaitUntil("the clear takes the core") { !core.isSegmentLoadable(url("/e/seg0.ts")) }
+        } finally {
+            onLooper { player.release() }
+        }
+    }
+
+    @Test
+    fun aReleaseAfterAnErrorTakesTheCoreOut() {
+        val player = erroredPlayer()
+        onLooper { player.release() }
+        awaitUntil("the release takes the core") { !core.isSegmentLoadable(url("/e/seg0.ts")) }
     }
 
     @Test
@@ -191,8 +379,10 @@ class Media3P2PEngineDeviceTest {
         val prepared = mutableListOf(vod, live)
         try {
             onLooper { vod.prepareSource(caller, PlayerId.UNSET, meter) }
+            engine.serveItem(vod.mediaItem)
             awaitLoadable(url("/a/seg0.ts"))
             onLooper { live.prepareSource(caller, PlayerId.UNSET, meter) }
+            engine.serveItem(live.mediaItem)
             awaitUntil("the live source placed") { engine.placement != null }
             onLooper { vod.releaseSource(caller) }
             prepared -= vod
@@ -295,15 +485,14 @@ class Media3P2PEngineDeviceTest {
                 listOf(ProcessedStream(url("/live.m3u8"), type, isLive, 0.0, 40.0, 10, null)),
                 liveDelay,
             )
-        engine.onManifest(manifest(StreamType.MAIN, true, PLACEMENT))
-        assertEquals(PLACEMENT, engine.placement)
-        engine.onManifest(ProcessedManifest(emptyList(), null))
-        engine.onManifest(manifest(StreamType.SECONDARY, true, AUDIO_PLACEMENT))
-        assertEquals(PLACEMENT, engine.placement, "a master or an audio playlist keeps it")
-        engine.onManifest(manifest(StreamType.MAIN, true, null))
-        assertEquals(PLACEMENT, engine.placement, "a live main playlist with no segments keeps it")
-        engine.onManifest(manifest(StreamType.MAIN, false, null))
-        assertNull(engine.placement, "an ended main playlist")
+        var placement = placementAfter(null, manifest(StreamType.MAIN, true, PLACEMENT))
+        assertEquals(PLACEMENT, placement)
+        placement = placementAfter(placement, ProcessedManifest(emptyList(), null))
+        placement = placementAfter(placement, manifest(StreamType.SECONDARY, true, AUDIO_PLACEMENT))
+        assertEquals(PLACEMENT, placement, "a master or an audio playlist keeps it")
+        placement = placementAfter(placement, manifest(StreamType.MAIN, true, null))
+        assertEquals(PLACEMENT, placement, "a live main playlist with no segments keeps it")
+        assertNull(placementAfter(placement, manifest(StreamType.MAIN, false, null)), "ended")
     }
 
     // A live player whose next segment left the window starts again; another error stays.
@@ -390,6 +579,7 @@ class Media3P2PEngineDeviceTest {
                     DefaultBandwidthMeter.Builder(context).build(),
                 )
             }
+            filteredEngine.serveItem(source.mediaItem)
             awaitUntil("seg0.ts is loadable") { filtered.isSegmentLoadable(url("/c/seg0.ts")) }
             assertFalse(filtered.isSegmentLoadable(url("/c/seg1.ts")), "kept off P2P")
             assertFalse(filtered.hasSegment(url("/c/seg1.ts")))
@@ -490,6 +680,8 @@ class Media3P2PEngineDeviceTest {
 
     private companion object {
         const val SLOW_SECONDS = 60L
+        const val STAYS_CHECKS = 10
+        const val STAYS_STEP_MS = 100L
         const val PLAY_SECONDS = 20L
         const val MIN_SEGMENTS = 3
         const val REPORTS_SHOWN = 5
