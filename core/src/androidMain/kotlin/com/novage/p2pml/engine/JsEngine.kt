@@ -37,18 +37,22 @@ internal class JsEngine(userAgent: String, internal val log: JsLog = JsLog.logca
     private var handle: Long = NativeEngine.create(userAgent.encodeToByteArray())
 
     /** The player bridge: the core of this engine's player. */
-    val player = CoreSession { name, id, texts, notTaken ->
-        // Encoded on the caller's thread, not the engine's.
-        val bytes = Array(texts.size) { texts[it]?.encodeToByteArray() }
-        val posted = post {
-            if (!NativeEngine.playerEvent(handle, name, id, bytes)) {
-                notTaken()
-            }
-        }
-        if (!posted) {
-            notTaken()
-        }
-    }
+    val player =
+        CoreSession(
+            port = { name, id, texts, notTaken ->
+                // Encoded on the caller's thread, not the engine's.
+                val bytes = Array(texts.size) { texts[it]?.encodeToByteArray() }
+                val posted = post {
+                    if (!NativeEngine.playerEvent(handle, name, id, bytes)) {
+                        notTaken()
+                    }
+                }
+                if (!posted) {
+                    notTaken()
+                }
+            },
+            onEngineThread = ::isEngineThread,
+        )
 
     init {
         // Not inherited from the thread that creates the engine.
@@ -148,6 +152,9 @@ internal class JsEngine(userAgent: String, internal val log: JsLog = JsLog.logca
 
                     override fun coreEvent(name: ByteArray, json: ByteArray) =
                         player.onEvent(name.decodeToString(), json.decodeToString())
+
+                    override fun call(function: Int, json: ByteArray) =
+                        player.onCall(function, json.decodeToString())?.encodeToByteArray()
                 }
             if (!NativeEngine.run(handle, sink, httpSink, wsSink, playerSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")
@@ -223,8 +230,10 @@ internal class JsEngine(userAgent: String, internal val log: JsLog = JsLog.logca
         }
     }
 
+    private fun isEngineThread() = Thread.currentThread() === thread
+
     private fun checkEngineThread() {
-        check(Thread.currentThread() === thread) { "Not on the engine thread" }
+        check(isEngineThread()) { "Not on the engine thread" }
     }
 
     private companion object {

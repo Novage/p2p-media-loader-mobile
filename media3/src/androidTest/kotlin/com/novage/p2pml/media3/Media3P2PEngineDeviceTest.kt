@@ -31,6 +31,7 @@ import com.novage.p2pml.core.LiveDelay
 import com.novage.p2pml.core.PlaybackState
 import com.novage.p2pml.core.ProcessedManifest
 import com.novage.p2pml.core.ProcessedStream
+import com.novage.p2pml.core.SegmentFilter
 import com.novage.p2pml.core.StreamType
 import java.lang.reflect.Method
 import java.util.concurrent.CompletableFuture
@@ -365,6 +366,37 @@ class Media3P2PEngineDeviceTest {
         val main = assertNotNull(engine.getConfig().core.mainStream)
         assertEquals(true, main.isP2PUploadDisabled)
         assertEquals(0.0, main.httpDownloadTimeWindow, "a setting that it does not set")
+    }
+
+    @Test
+    fun aSegmentFilterOfTheSettingsKeepsASegmentOffP2P() {
+        val filtered =
+            Core(
+                testConfig().apply {
+                    segmentFilter = SegmentFilter { !it.url.endsWith("/seg1.ts") }
+                }
+            )
+        val filteredEngine = Media3P2PEngine(filtered) { filtered.updatePlayback(it) }
+        val source =
+            filteredEngine
+                .mediaSourceFactory(DefaultHttpDataSource.Factory())
+                .createMediaSource(MediaItem.fromUri(url("/c/master.m3u8")))
+        val caller = MediaSource.MediaSourceCaller { _, _ -> }
+        try {
+            onLooper {
+                source.prepareSource(
+                    caller,
+                    PlayerId.UNSET,
+                    DefaultBandwidthMeter.Builder(context).build(),
+                )
+            }
+            awaitUntil("seg0.ts is loadable") { filtered.isSegmentLoadable(url("/c/seg0.ts")) }
+            assertFalse(filtered.isSegmentLoadable(url("/c/seg1.ts")), "kept off P2P")
+            assertFalse(filtered.hasSegment(url("/c/seg1.ts")))
+        } finally {
+            runCatching { onLooper { source.releaseSource(caller) } }
+            filteredEngine.close()
+        }
     }
 
     // Completes [ready] at the first READY, and records a player error in [error] and [ready]; a

@@ -32,11 +32,15 @@ internal fun interface PlayerPort {
 
 /**
  * The core in an engine, as the bridge gives its calls (specs/engine.md, "The player bridge"). Any
- * thread. A query and a load get one [Answer] each, which the caller waits for; a call that JS does
+ * thread but the engine's for a call that has an answer ([onEngineThread]): there it would wait for
+ * itself. A query and a load get one [Answer] each, which the caller waits for; a call that JS does
  * not take, an open call when the engine closes, and a call after it fail, so that no caller waits
  * for good.
  */
-internal class CoreSession(private val port: PlayerPort) {
+internal class CoreSession(
+    private val port: PlayerPort,
+    private val onEngineThread: () -> Boolean = { false },
+) {
     private val lastId = AtomicInteger()
     // The calls that have no answer yet.
     private val calls = ConcurrentHashMap<Int, CompletableFuture<Answer>>()
@@ -55,8 +59,16 @@ internal class CoreSession(private val port: PlayerPort) {
     fun query(name: String, texts: List<String?> = emptyList()): String? =
         (call(name, texts).await() as? Answer.Value)?.json?.takeIf { it != "null" }
 
-    /** Starts a call that has an answer; [Call.await] waits for it. */
+    /**
+     * Starts a call that has an answer; [Call.await] waits for it.
+     *
+     * @throws IllegalStateException on the engine thread, such as from a function of the core's
+     *   settings.
+     */
     fun call(name: String, texts: List<String?>): Call {
+        check(!onEngineThread()) {
+            "A call to the core cannot wait on the core's thread, such as in a function of its settings"
+        }
         val id = lastId.incrementAndGet()
         val call = Call(id)
         calls[id] = call.answer
@@ -66,6 +78,12 @@ internal class CoreSession(private val port: PlayerPort) {
 
     /** Takes the core's event [name] with its JSON details, on the engine thread. */
     @Volatile var onEvent: (name: String, json: String) -> Unit = { _, _ -> }
+
+    /**
+     * Calls the platform's [function] with its argument as JSON, on the engine thread: the answer
+     * as JSON, or null for none.
+     */
+    @Volatile var onCall: (function: Int, json: String) -> String? = { _, _ -> null }
 
     /** The bridge's answer to call [id], on the engine thread. */
     fun answer(id: Int, answer: Answer) {

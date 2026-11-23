@@ -3,13 +3,19 @@
 // JS core's calls (specs/api.md). The platform sends its events
 // (natives.playerListen, native/src/player.c); `range` is "start-end",
 // inclusive, or undefined:
-// - start(0, config): makes the core, with `config` (JSON) as its settings;
+// - start(0, config): makes the core, with `config` (JSON) as its settings.
+//   A function of the platform's in the settings (swarmId, streamIdBuilder,
+//   segmentFilter, for both stream types or in mainStream or
+//   secondaryStream) is {function: n}: the core gets a JS function that
+//   calls natives.playerCall(n, json) with its argument, and gets
+//   {value} or {error: message} as JSON;
 // - manifest(id, url, requestedUrl, data), loadable(id, url, range) and
 //   config(id): processManifest, isSegmentLoadable and getConfig, answered at
-//   once with natives.playerValue(id, json). The answer of manifest is null,
-//   or the processed streams with liveDelay: where the core's liveDelayFor
-//   places a live player, with playerBufferFor and maxLiveLatencyFor of that
-//   placement, or null;
+//   once with natives.playerValue(id, json). In the answer of config, a
+//   function of the platform's is {function: n} again. The answer of manifest
+//   is null, or the processed streams with liveDelay: where the core's
+//   liveDelayFor places a live player, with playerBufferFor and
+//   maxLiveLatencyFor of that placement, or null;
 // - streams(id), stream(id, runtimeId) and hasSegment(id, url, range):
 //   getStreams, getStream and hasSegment, answered at once in the same way;
 //   with no core, null, null and false;
@@ -33,6 +39,7 @@
     playerData,
     playerFail,
     playerCoreEvent,
+    playerCall,
     reportError,
   } = natives;
   // Kept now, so that a script that replaces these globals changes nothing
@@ -47,6 +54,39 @@
   const loads = new Set();
   // The core's events that the platform listens to, with their listeners.
   const forwarded = new Map();
+
+  // The platform's functions, by number: one JS function for each, so that
+  // one function of the platform's is one function for the core, which
+  // keeps a swarmId function's answer by function. `numbers` maps them back.
+  const functions = new Map();
+  const numbers = new Map();
+  const functionOf = (n) => {
+    let call = functions.get(n);
+    if (call === undefined) {
+      call = (argument) => {
+        const answer = JSON.parse(playerCall(n, JSON.stringify(argument)));
+        if ("error" in answer) {
+          throw new Error(answer.error);
+        }
+        // JSON has no undefined: a builder's undefined is null.
+        return answer.value ?? undefined;
+      };
+      functions.set(n, call);
+      numbers.set(call, n);
+    }
+    return call;
+  };
+
+  // JSON.parse and JSON.stringify of settings: a {function: n} marker is the
+  // platform's function n, and back.
+  const withFunctions = (key, value) =>
+    value !== null &&
+    typeof value === "object" &&
+    typeof value.function === "number"
+      ? functionOf(value.function)
+      : value;
+  const withMarkers = (key, value) =>
+    numbers.has(value) ? { function: numbers.get(value) } : value;
 
   // An error as data; undefined stays undefined.
   const errorOf = (error) => {
@@ -171,7 +211,7 @@
               };
             }
             core = new Core({
-              ...JSON.parse(config),
+              ...JSON.parse(config, withFunctions),
               manifestParsers: [hlsManifestParser],
             });
             rules = { liveDelayFor, playerBufferFor, maxLiveLatencyFor };
@@ -217,7 +257,7 @@
     },
 
     config(id) {
-      playerValue(id, JSON.stringify(core?.getConfig() ?? null));
+      playerValue(id, JSON.stringify(core?.getConfig() ?? null, withMarkers));
     },
 
     streams(id) {

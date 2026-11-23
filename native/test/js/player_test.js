@@ -77,10 +77,26 @@ const requestOf = async (url) => {
 };
 
 // No prefetch: the core loads only the segments that the tests ask for.
+// The platform's functions (fakePlayer.onCall): 1 names the swarm, 2 builds
+// the stream IDs, 3 filters the segments. Main and secondary have markers
+// of their own for 1, which give one function.
 const CONFIG = JSON.stringify({
   httpDownloadTimeWindow: 0,
   p2pDownloadTimeWindow: 0,
+  streamIdBuilder: { function: 2 },
+  segmentFilter: { function: 3 },
+  mainStream: { swarmId: { function: 1 } },
+  secondaryStream: { swarmId: { function: 1 } },
 });
+
+// The answers of the platform's functions as if there were none: the
+// manifest's URL names the swarm, the default stream IDs, every segment
+// shared.
+const asWithout = (n, json) =>
+  JSON.stringify({
+    value: n === 1 ? JSON.parse(json).manifestUrl : n === 3 ? true : null,
+  });
+fakePlayer.onCall = asWithout;
 
 const giveManifests = () => {
   fakePlayer.send("manifest", 0, BASE + "master.m3u8", undefined, MASTER);
@@ -483,7 +499,9 @@ test("the streams, their segments, the swarm's name and dynamic settings", () =>
       assertEquals(secondaryStream.isP2PDisabled, true, "for both, secondary");
       assertEquals(mainStream.httpErrorRetries, 5, "for main");
       assertEquals(secondaryStream.httpErrorRetries, 3, "not for secondary");
-      assertEquals(mainStream.swarmId, undefined, "a static key");
+      // The platform's functions are their markers again.
+      assertEquals(mainStream.swarmId?.function, 1, "a static key");
+      assertEquals(secondaryStream.segmentFilter?.function, 3, "a function");
     } finally {
       // The settings of the tests after this one, which destroy keeps.
       fakePlayer.send(
@@ -491,6 +509,100 @@ test("the streams, their segments, the swarm's name and dynamic settings", () =>
         0,
         JSON.stringify({ isP2PDisabled: false, httpErrorRetries: 3 }),
       );
+      fakePlayer.send("destroy", 0);
+    }
+  }));
+
+// A source with a video stream and an audio rendition.
+const SHOW = BASE + "show/";
+const SHOW_MASTER = [
+  "#EXTM3U",
+  '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="en",URI="audio.m3u8"',
+  '#EXT-X-STREAM-INF:BANDWIDTH=1280000,AUDIO="a"',
+  "media.m3u8",
+  "",
+].join("\n");
+const AUDIO = MEDIA.replaceAll("seg", "aud").replace("range", "arange");
+
+const giveShow = () => {
+  fakePlayer.send(
+    "manifest",
+    0,
+    SHOW + "master.m3u8",
+    SHOW + "master.m3u8?id=42",
+    SHOW_MASTER,
+  );
+  fakePlayer.send("manifest", 0, SHOW + "media.m3u8", undefined, MEDIA);
+  fakePlayer.send("manifest", 0, SHOW + "audio.m3u8", undefined, AUDIO);
+};
+
+test("the platform's functions name the swarm, the streams and the shared segments", () =>
+  inOrder(async () => {
+    const calls = [];
+    const argumentsOf = (n) =>
+      calls.filter((call) => call.n === n).map((call) => call.argument);
+    try {
+      fakePlayer.onCall = (n, json) => {
+        const argument = JSON.parse(json);
+        calls.push({ n, argument });
+        const answer = (value) => JSON.stringify({ value });
+        if (n === 1) return answer("show-42");
+        if (n === 2) return answer(argument.index === 0 ? null : "x");
+        if (argument.url.endsWith("/seg2.m4s")) return answer(false);
+        if (argument.url.endsWith("/range.m4s")) {
+          return JSON.stringify({ error: "the filter failed" });
+        }
+        return answer(true);
+      };
+      giveShow();
+      const streams = await query("streams");
+      assertEquals(streams.length, 2, "the streams");
+      const [video, audio] = streams;
+      assertEquals(video.swarmId, "show-42", "the swarm");
+      assertEquals(audio.swarmId, "show-42", "the audio's swarm");
+      // One function for main and secondary: asked once for the source.
+      assertEquals(
+        JSON.stringify(argumentsOf(1)),
+        JSON.stringify([
+          {
+            manifestUrl: SHOW + "master.m3u8",
+            requestedUrl: SHOW + "master.m3u8?id=42",
+          },
+        ]),
+        "the swarm's function",
+      );
+      // A builder's null keeps the default.
+      assertEquals(video.streamId, "main0", "the default stream ID");
+      const built = argumentsOf(2).find((a) => a.streamType === "main");
+      assertEquals(built.swarmId, "show-42", "the builder gets the swarm");
+      assertEquals(
+        built.manifest.url,
+        SHOW + "master.m3u8?id=42",
+        "its manifest, as requested",
+      );
+
+      const has = (url, range) => query("hasSegment", SHOW + url, range);
+      assertEquals(await has("seg0.m4s"), true, "a shared segment");
+      assertEquals(await has("seg2.m4s"), false, "a filtered segment");
+      assertEquals(await has("range.m4s", "0-999"), false, "a failed filter");
+      const filtered = argumentsOf(3).find((a) => a.url === SHOW + "seg2.m4s");
+      assertEquals(filtered.runtimeId, SHOW + "media.m3u8", "its stream");
+      assertEquals(
+        `${filtered.startTime}-${filtered.endTime}`,
+        "8-12",
+        "times",
+      );
+      const ranged = argumentsOf(3).find((a) => a.url === SHOW + "range.m4s");
+      assertEquals(JSON.stringify(ranged.byteRange), '{"start":0,"end":999}');
+
+      // The next source asks again; no answer is a throw in the core, which
+      // then registers no stream.
+      fakePlayer.send("destroy", 0);
+      fakePlayer.onCall = () => undefined;
+      giveShow();
+      assertEquals((await query("streams")).length, 0, "no answer");
+    } finally {
+      fakePlayer.onCall = asWithout;
       fakePlayer.send("destroy", 0);
     }
   }));

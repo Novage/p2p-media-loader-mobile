@@ -63,21 +63,59 @@ stream settings of each stream type in `mainStream` and `secondaryStream`.
 are the JS types of the same names: the settings that the core can change
 while it runs. As in JS, they do not have `announceTrackers` and `swarmId`
 (the swarm's name, which the core gives a stream when it registers it).
-`StreamConfig` extends `DynamicStreamConfig` with these two, so a
+`StreamConfig` extends `DynamicStreamConfig` with these two and the
+function settings (see below), which are not dynamic either, so a
 `StreamConfig` given in place of a `DynamicStreamConfig` compiles;
-`applyDynamicConfig` does not send the two. Of a config given as
+`applyDynamicConfig` does not send them. Of a config given as
 `mainStream` or `secondaryStream`, only the stream settings apply. As in
 JS, `DynamicCoreConfig` has the common settings: `segmentMemoryStorageLimit`
 applies from the next segment storage that the core makes (at the first
 load, and at the first after `destroy()`), and `trackerClientVersionPrefix`
 does not apply.
 
-The settings that are functions in JS (`httpRequestSetup`,
-`validateP2PSegment`, `segmentFilter`, `streamIdBuilder`, `swarmId` as a
-function, `customSegmentStorageFactory`) are not in the API: a Kotlin
-function cannot run in the engine (KNOWN-ISSUES.md). As in JS,
-`httpErrorRetries` counts all the HTTP tries, not the retries after the
-first, so `0` makes the core load nothing over HTTP.
+As in JS, `httpErrorRetries` counts all the HTTP tries, not the retries
+after the first, so `0` makes the core load nothing over HTTP.
+
+### Functions in the settings
+
+`StreamConfig` has the JS core's synchronous function settings, as Kotlin
+`fun interface`s with the JS context types: `streamIdBuilder`
+(`StreamIdBuilder`), `segmentFilter` (`SegmentFilter`), and `swarmId` as a
+function, which is `swarmIdFunction` (`SwarmIdFunction`), beside `swarmId`
+as a string. A config sets one of the two: `Core`'s constructor throws
+`IllegalArgumentException` for both in one config. A stream type's own
+config wins over the one for both, as in JS, also a string over a
+function. They are not dynamic, as in JS. `getConfig()` gives the same
+function objects back.
+
+- **Where they run:** on the core's thread, which waits for each answer, as
+  the JS core waits for its function. So a function must be fast: a
+  `segmentFilter` is asked for each segment each time a manifest lists it,
+  also at each refresh of a live playlist. A call to `Core` that waits for
+  an answer (`getConfig`, `getStreams`, `processManifest`, …) would wait for
+  itself there: it throws `IllegalStateException`. A wait for such a call
+  on another thread (such as `runBlocking(Dispatchers.IO) { … }`) is not
+  seen: it stops the core for good. The calls with no answer (`destroy`,
+  `applyDynamicConfig`, `close`, …) do not wait.
+- **The cost of a call:** the bridge's own cost, with a function that does
+  nothing, is about 35 µs on a OnePlus 7 (2019), JSON both ways. A
+  `segmentFilter` about doubles the core's work on a live playlist: on that
+  phone, a refresh of a playlist of 3600 segments (a two-hour window of 2 s
+  segments) takes about 240 ms in place of 120 ms; one of 30 segments,
+  about 1 ms more (KNOWN-ISSUES.md).
+- **A throw,** any `Throwable`, also an `Error` such as `TODO()`, is a
+  throw of the JS function, with its message (or its class, when it has
+  none) as the message: of a `swarmIdFunction` or a `streamIdBuilder`, it
+  fails the stream's registration (`OnStreamRegistrationError`), and the
+  stream plays without P2P; of a `segmentFilter`, it keeps the segment off
+  P2P.
+- **One object, one function:** the same object given for both stream
+  types is one function for the core, which calls a `swarmIdFunction` once
+  for each source while it gives an answer; after a throw, the next stream
+  of the source asks again.
+
+The other function settings of JS (`httpRequestSetup`, `validateP2PSegment`,
+`customSegmentStorageFactory`) are not in the API (KNOWN-ISSUES.md).
 
 ## Where Kotlin differs from JS
 
@@ -265,5 +303,6 @@ fails, and `getConfig()` gives the given settings, in the JS `getConfig()`
 shape (the common settings, and each stream type's own over the ones for
 both). `getStreams()` is empty, `getStream` gives null, `hasSegment` gives
 false, and `applyDynamicConfig` and `setManifestResponseUrl` do nothing.
-Nothing says that P2P is off. The player loads every request itself,
+The functions of the settings are never called. Nothing says that P2P is
+off. The player loads every request itself,
 and plays without P2P.

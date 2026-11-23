@@ -54,9 +54,14 @@ public class CoreRequestError(public val type: String, message: String) : IOExce
  * gives a value blocks its thread until the core's thread answers, also where JS answers at once
  * (such as [getStreams] or [hasSegment]), so call them off the main thread.
  *
- * The core runs in a JS engine with a thread of its own: [close] ends it. Without the library's
- * native code (on 32-bit x86, see KNOWN-ISSUES.md), there is no core: no segment is loadable, and
- * the player loads every request itself.
+ * The core runs in a JS engine with a thread of its own: [close] ends it. The functions of its
+ * settings run on that thread: a call that waits for the core throws [IllegalStateException] there,
+ * and a wait for the core on another thread stops the core for good. Without the library's native
+ * code (on 32-bit x86, see KNOWN-ISSUES.md), there is no core: no segment is loadable, the
+ * functions are never called, and the player loads every request itself.
+ *
+ * @throws IllegalArgumentException when a config of [CoreConfig] has both `swarmId` and
+ *   `swarmIdFunction`.
  */
 // The JS core's calls, one function each.
 @Suppress("TooManyFunctions")
@@ -67,7 +72,9 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
         config: CoreConfig = CoreConfig()
     ) : this(config, { JsEngine(libraryUserAgent()) })
 
-    private val config = config.toJson().toString()
+    // The functions of the settings, which the JSON names by number.
+    private val functions = FunctionTable()
+    private val config = config.toJson(functions).toString()
     private val engine: JsEngine? =
         try {
             newEngine()
@@ -76,7 +83,7 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
         }
     // With no engine, a session that takes no call: each call fails at once, as after a close.
     private val session: CoreSession =
-        engine?.player ?: CoreSession { _, _, _, notTaken -> notTaken() }
+        engine?.player ?: CoreSession({ _, _, _, notTaken -> notTaken() })
 
     // The listeners of the core's events; JS forwards the events that they listen to.
     private val events =
@@ -89,6 +96,7 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
 
     init {
         session.onEvent = events::post
+        session.onCall = functions::call
         session.send("start", listOf(this.config))
     }
 
@@ -110,14 +118,16 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
 
     /**
      * The settings that the core uses: the given ones and the core's defaults, as the JS core's
-     * `getConfig()`. With no core, and after [close], the given settings, in the same shape.
+     * `getConfig()`, with the given functions. With no core, and after [close], the given settings,
+     * in the same shape.
      *
      * @throws InterruptedIOException when the waiting thread is interrupted.
      */
     @Throws(InterruptedIOException::class)
     public fun getConfig(): CoreConfig {
         val json = session.query("config")
-        return CoreConfig().readFrom(json?.let(::JSONObject) ?: JSONObject(config).inConfigShape())
+        return CoreConfig()
+            .readFrom(json?.let(::JSONObject) ?: JSONObject(config).inConfigShape(), functions)
     }
 
     /**

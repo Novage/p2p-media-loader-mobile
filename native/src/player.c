@@ -138,12 +138,52 @@ static JSValue player_core_event(JSContext *context, JSValueConst this_value, in
   return JS_UNDEFINED;
 }
 
+// The answer of a call of the platform's function: a JS string, or undefined
+// while there is none.
+typedef struct {
+  JSContext *context;
+  JSValue value;
+} call_answer;
+
+static void take_answer(void *data, const uint8_t *json, size_t length) {
+  call_answer *answer = data;
+  JS_FreeValue(answer->context, answer->value);
+  answer->value = JS_NewStringLen(answer->context, (const char *)json, length);
+}
+
+// playerCall(function, json): the answer of the platform's function
+// `function` to the argument `json`, as JSON text. It throws when the
+// platform gives no answer.
+static JSValue player_call(JSContext *context, JSValueConst this_value, int argc,
+                           JSValueConst *argv) {
+  (void)this_value;
+  (void)argc;
+  p2pml_player_client *client = &player_of(context)->client;
+  int32_t function = 0;
+  if (JS_ToInt32(context, &function, argv[0]) < 0) {
+    return JS_EXCEPTION;
+  }
+  size_t length = 0;
+  const char *json = JS_ToCStringLen(context, &length, argv[1]);
+  if (json == NULL) {
+    return JS_EXCEPTION;
+  }
+  call_answer answer = {.context = context, .value = JS_UNDEFINED};
+  client->call(client->data, function, (const uint8_t *)json, length, take_answer, &answer);
+  JS_FreeCString(context, json);
+  if (JS_IsUndefined(answer.value)) {
+    return JS_ThrowInternalError(context, "the platform gave no answer");
+  }
+  return answer.value;
+}
+
 static const JSCFunctionListEntry player_functions[] = {
     JS_CFUNC_DEF("playerListen", 1, player_listen),
     JS_CFUNC_MAGIC_DEF("playerValue", 2, player_answer, 0),
     JS_CFUNC_MAGIC_DEF("playerData", 4, player_answer, 1),
     JS_CFUNC_MAGIC_DEF("playerFail", 3, player_answer, 2),
     JS_CFUNC_DEF("playerCoreEvent", 2, player_core_event),
+    JS_CFUNC_DEF("playerCall", 2, player_call),
 };
 
 bool p2pml_player_add(JSContext *context, JSValueConst natives) {

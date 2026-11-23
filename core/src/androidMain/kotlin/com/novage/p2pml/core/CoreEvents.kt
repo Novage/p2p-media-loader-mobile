@@ -383,16 +383,16 @@ public data class TrackerWarningDetails(
 // The details come from the bridge's JSON (native/src/polyfills/player.js). A field that JS left
 // undefined is absent: null here, or the empty text where the core always gives one.
 
-private fun JSONObject.text(name: String): String = textOrNull(name).orEmpty()
+internal fun JSONObject.text(name: String): String = textOrNull(name).orEmpty()
 
-private fun JSONObject.textOrNull(name: String): String? = value(name)?.toString()
+internal fun JSONObject.textOrNull(name: String): String? = value(name)?.toString()
 
-private fun JSONObject.streamType(name: String) = streamTypeOf(optString(name))
+internal fun JSONObject.streamType(name: String) = streamTypeOf(optString(name))
 
 private fun JSONObject.downloadSource() =
     if (optString("downloadSource") == "p2p") DownloadSource.P2P else DownloadSource.HTTP
 
-private fun JSONObject.byteRangeOf(): ByteRange? =
+internal fun JSONObject.byteRangeOf(): ByteRange? =
     optJSONObject("byteRange")?.let { ByteRange(it.optLong("start"), it.optLong("end")) }
 
 private fun JSONObject.segment(): Segment =
@@ -418,7 +418,7 @@ internal fun JSONObject.toStream() =
         text("infoHash"),
     )
 
-private fun JSONObject.propertiesOf(): StreamProperties {
+internal fun JSONObject.propertiesOf(): StreamProperties {
     val properties = optJSONObject("properties") ?: JSONObject()
     fun number(name: String) = properties.value(name) as? Number
     return StreamProperties(

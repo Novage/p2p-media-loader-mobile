@@ -206,6 +206,33 @@ static void fake_player_core_event(void *data, const uint8_t *name, size_t name_
   push_to(context, "fakePlayer", "coreEvents", event);
 }
 
+// The platform's functions: fakePlayer.onCall(function, json) gives the
+// answer as JSON text, or undefined for none.
+static void fake_player_call(void *data, int32_t function, const uint8_t *json, size_t length,
+                             void (*answer)(void *answer_data, const uint8_t *json, size_t length),
+                             void *answer_data) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue global = JS_GetGlobalObject(context);
+  JSValue player = JS_GetPropertyStr(context, global, "fakePlayer");
+  JSValue on_call = JS_GetPropertyStr(context, player, "onCall");
+  JSValue args[2] = {JS_NewInt32(context, function),
+                     JS_NewStringLen(context, (const char *)json, length)};
+  JSValue result = JS_Call(context, on_call, player, 2, args);
+  CHECK(!JS_IsException(result));
+  if (JS_IsString(result)) {
+    size_t answer_length = 0;
+    const char *text = JS_ToCStringLen(context, &answer_length, result);
+    CHECK(text != NULL);
+    answer(answer_data, (const uint8_t *)text, answer_length);
+    JS_FreeCString(context, text);
+  }
+  JS_FreeValue(context, result);
+  JS_FreeValue(context, args[1]);
+  JS_FreeValue(context, on_call);
+  JS_FreeValue(context, player);
+  JS_FreeValue(context, global);
+}
+
 static void fake_start(void *data, int32_t id, const char *method, const char *url,
                        size_t header_count, const char *const *headers) {
   JSContext *context = p2pml_engine_context(data);
@@ -240,6 +267,7 @@ static void *run_engine(void *data) {
                                      .segment = fake_player_segment,
                                      .fail = fake_player_fail,
                                      .core_event = fake_player_core_event,
+                                     .call = fake_player_call,
                                      .data = args->engine};
   CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log,
                          &fake, &fake_ws, &fake_player));

@@ -403,7 +403,11 @@ playback state.
   - `start(config)` imports the core and makes it, once, with the JSON
     object `config` as its settings and the HLS parser. QuickJS loads the
     module in the Promise jobs of this event's task, which run before the
-    next task: the next event finds the core.
+    next task: the next event finds the core. A function of the platform's
+    in the settings (`swarmId`, `streamIdBuilder` or `segmentFilter`, for
+    both stream types or in `mainStream` or `secondaryStream`) is
+    `{"function": n}` there: the glue gives the core one JS function for
+    each `n` (see the functions below).
   - `manifest(id, url, requestedUrl, data)` is `processManifest`, with the
     URL after redirects and the one asked for, as the HLS.js adapter gives
     them: a query, answered at once with the core's result and the
@@ -415,7 +419,9 @@ playback state.
     `stream(id, runtimeId)` and `hasSegment(id, url, range)` are
     `isSegmentLoadable`, `getConfig`, `getStreams`, `getStream` and
     `hasSegment`: queries, answered at once. A stream is the JS core's
-    snapshot, as the details of `onStreamAdded` give it.
+    snapshot, as the details of `onStreamAdded` give it. In the answer of
+    `config`, a function of the platform's is `{"function": n}` again, so
+    that `getConfig()` gives the platform's function object back.
   - `dynamicConfig(config)` is `applyDynamicConfig`, with the JSON object
     `config`; `manifestResponseUrl(url)` is `setManifestResponseUrl`.
   - `load(id, url, range)` is `loadSegment`: as in JS, a URL that the core
@@ -453,6 +459,17 @@ playback state.
   which is not enumerable. An exception while the glue serializes an event
   is reported, never thrown into the core. `Core` gives the details to its
   listeners on its event thread (specs/api.md, "Events").
+- **The platform's functions,** from JS to Kotlin, with an answer: the JS
+  function of `n` calls the native `playerCall(n, json)` with its argument
+  as JSON, and the engine calls the client's `call` (`PlayerSink.call` in
+  Kotlin) on the engine thread, which waits for it. The client gives its
+  answer during the call: `{"value": v}`, where `null` is JS's
+  `undefined`, or `{"error": message}`, which the JS function throws as an
+  `Error`; a call with no answer throws too. `Core` numbers each function
+  object once for each kind, so that one object is one JS function: the
+  JS core keeps a `swarmId` function's answer by function. On the engine
+  thread, a call that waits for an answer of the bridge throws
+  `IllegalStateException` in Kotlin: it would wait for itself.
 - **When JS does not take an event** (an exception, out of memory), the
   listener's error is reported, and the call fails at once: a query gives no
   value, a load fails.

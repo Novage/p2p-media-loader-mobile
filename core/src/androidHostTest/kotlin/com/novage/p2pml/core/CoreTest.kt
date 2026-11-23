@@ -2,6 +2,7 @@ package com.novage.p2pml.core
 
 import com.novage.p2pml.engine.JsEngine
 import java.io.InterruptedIOException
+import java.lang.reflect.Proxy
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
@@ -17,6 +18,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -237,23 +239,219 @@ class CoreTest {
         assertEquals(SWARM_ID, main.swarmId)
     }
 
+    // Runs [test] with a core of its own, made with [config], and closes it.
+    private fun withCore(config: CoreConfig, test: (Core) -> Unit) {
+        var ownEngine: JsEngine? = null
+        Core(config) {
+                JsEngine("test-agent") { _, message -> lines.put(message) }.also { ownEngine = it }
+            }
+            .use(test)
+        // Its lines too, before stop() reads them.
+        assertTrue(assertNotNull(ownEngine).awaitClosed(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+    }
+
     @Test
     fun setManifestResponseUrlNamesTheSwarm() {
         // No configured swarmId, which would win.
-        val config = testConfig().apply { swarmId = null }
-        var namedEngine: JsEngine? = null
-        Core(config) {
-                JsEngine("test-agent") { _, message -> lines.put(message) }
-                    .also { namedEngine = it }
+        withCore(testConfig().apply { swarmId = null }) { named ->
+            named.setManifestResponseUrl("https://cdn.example.com/show/index.m3u8?token=1")
+            giveManifests(named)
+            val stream = named.getStreams().single()
+            assertEquals("https://cdn.example.com/show/index.m3u8", stream.swarmId)
+        }
+    }
+
+    @Test
+    fun functionsOfTheSettingsNameTheSwarmAndTheStreams() {
+        val swarmContexts = LinkedBlockingQueue<SwarmIdContext>()
+        val built = LinkedBlockingQueue<StreamIdBuilderContext>()
+        // One function for both stream types: called once for each source.
+        val swarm = SwarmIdFunction { swarmContexts.put(it).let { "show-42" } }
+        val builder = StreamIdBuilder { context ->
+            built.put(context)
+            if (context.streamType == StreamType.MAIN) "video" else null
+        }
+        val config =
+            testConfig().apply {
+                swarmId = null
+                streamIdBuilder = builder
+                mainStream = StreamConfig().apply { swarmIdFunction = swarm }
+                secondaryStream = StreamConfig().apply { swarmIdFunction = swarm }
             }
-            .use { named ->
-                named.setManifestResponseUrl("https://cdn.example.com/show/index.m3u8?token=1")
-                giveManifests(named)
-                val stream = named.getStreams().single()
-                assertEquals("https://cdn.example.com/show/index.m3u8", stream.swarmId)
+        withCore(config) { show ->
+            val requested = url("/master.m3u8?id=42")
+            fun giveShow() {
+                show.processManifest(url("/master.m3u8"), requested, MASTER_WITH_AUDIO)
+                show.processManifest(url("/media.m3u8"), data = MEDIA)
+                show.processManifest(url("/audio.m3u8"), data = AUDIO)
             }
-        // Its lines too, before stop() reads them.
-        assertTrue(assertNotNull(namedEngine).awaitClosed(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            giveShow()
+            val (video, audio) = show.getStreams()
+            assertEquals(listOf("show-42", "show-42"), listOf(video.swarmId, audio.swarmId))
+            assertEquals(
+                listOf(SwarmIdContext(url("/master.m3u8"), requested)),
+                swarmContexts.toList(),
+            )
+            assertEquals("video", video.streamId)
+            assertEquals("secondary0", audio.streamId, "null keeps the default")
+            val context = built.first { it.streamType == StreamType.MAIN }
+            assertEquals("show-42", context.swarmId)
+            assertEquals(url("/media.m3u8"), context.runtimeId)
+            assertEquals("main0", context.defaultStreamId)
+            assertEquals(0, context.index)
+            assertEquals(BANDWIDTH, context.properties.bitrate)
+            val manifest = assertNotNull(context.manifest)
+            assertEquals(requested, manifest.url)
+            assertEquals(MASTER_WITH_AUDIO, manifest.text)
+            assertEquals(
+                listOf(StreamType.MAIN to "main0", StreamType.SECONDARY to "secondary0"),
+                manifest.streams.map { it.streamType to it.defaultStreamId },
+            )
+            // The next source asks again.
+            show.destroy()
+            giveShow()
+            assertEquals(2, swarmContexts.size)
+            // getConfig gives the given functions back.
+            val main = assertNotNull(show.getConfig().mainStream)
+            assertSame(swarm, main.swarmIdFunction)
+            assertSame(builder, main.streamIdBuilder)
+        }
+    }
+
+    @Test
+    fun aSegmentFilterKeepsSegmentsOffP2P() {
+        val contexts = LinkedBlockingQueue<SegmentFilterContext>()
+        val filter = SegmentFilter { context ->
+            contexts.put(context)
+            when {
+                context.url.endsWith("/seg1.ts") -> false
+                // An Error too.
+                context.url.endsWith("/seg2.ts") -> TODO("the filter failed")
+                else -> true
+            }
+        }
+        withCore(testConfig().apply { segmentFilter = filter }) { filtered ->
+            filtered.processManifest(url("/media.m3u8"), data = MEDIA_WITH_CUE)
+            assertTrue(filtered.hasSegment(url("/seg0.ts")), "shared")
+            assertFalse(filtered.hasSegment(url("/seg1.ts")), "kept off P2P")
+            assertFalse(filtered.isSegmentLoadable(url("/seg1.ts")), "the player loads it")
+            assertFalse(filtered.hasSegment(url("/seg2.ts")), "a throw keeps it off P2P")
+            val cue = contexts.first { it.url == url("/seg1.ts") }
+            assertEquals(StreamType.MAIN, cue.streamType)
+            assertEquals(url("/media.m3u8"), cue.runtimeId)
+            assertEquals(HlsSegmentMarkers(true, "30", null, null), cue.hls)
+            val range = contexts.first { it.url == url("/range.ts") }
+            assertEquals(RANGE, range.byteRange)
+            assertEquals(
+                LAST_START to LAST_START + SEGMENT_SECONDS,
+                range.startTime to range.endTime,
+            )
+        }
+    }
+
+    @Test
+    fun aSwarmIdFunctionThatThrowsFailsTheRegistration() {
+        val calls = AtomicInteger()
+        val config =
+            testConfig().apply {
+                swarmId = null
+                swarmIdFunction = SwarmIdFunction {
+                    if (calls.incrementAndGet() == 1) error("no id")
+                    throw TextlessException()
+                }
+            }
+        withCore(config) { failing ->
+            val errors = LinkedBlockingQueue<StreamRegistrationErrorDetails>()
+            failing.addEventListener(CoreEvent.OnStreamRegistrationError) { errors.put(it) }
+            giveManifests(failing)
+            assertEquals(emptyList(), failing.getStreams())
+            val error = assertNotNull(errors.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS)).error
+            assertEquals("no id", error.message, "the throw's text")
+            // The next source: an exception whose text throws gives its class.
+            failing.destroy()
+            giveManifests(failing)
+            assertEquals(emptyList(), failing.getStreams())
+            val next = assertNotNull(errors.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS)).error
+            assertEquals(TextlessException::class.java.name, next.message)
+        }
+    }
+
+    @Test
+    fun aSwarmIdFunctionFromJavaThatGivesNullSaysSo() {
+        // As a Java function that returns null.
+        val javaLike =
+            Proxy.newProxyInstance(
+                SwarmIdFunction::class.java.classLoader,
+                arrayOf(SwarmIdFunction::class.java),
+            ) { proxy, method, args ->
+                when (method.name) {
+                    "swarmId" -> null
+                    "equals" -> proxy === args?.get(0)
+                    "hashCode" -> System.identityHashCode(proxy)
+                    else -> "a Java-like SwarmIdFunction"
+                }
+            } as SwarmIdFunction
+        val config =
+            testConfig().apply {
+                swarmId = null
+                swarmIdFunction = javaLike
+            }
+        withCore(config) { failing ->
+            val errors = LinkedBlockingQueue<StreamRegistrationErrorDetails>()
+            failing.addEventListener(CoreEvent.OnStreamRegistrationError) { errors.put(it) }
+            giveManifests(failing)
+            val error = assertNotNull(errors.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS)).error
+            assertEquals("swarmIdFunction gave null", error.message)
+        }
+    }
+
+    @Test
+    fun aFunctionCannotWaitForTheCore() {
+        lateinit var waiting: Core
+        val failures = LinkedBlockingQueue<Throwable>()
+        val filter = SegmentFilter {
+            runCatching { waiting.getStreams() }.exceptionOrNull()?.let(failures::put)
+            true
+        }
+        withCore(testConfig().apply { segmentFilter = filter }) {
+            waiting = it
+            giveManifests(waiting)
+            assertIs<IllegalStateException>(failures.first())
+            // The core goes on.
+            assertEquals(1, waiting.getStreams().size)
+        }
+    }
+
+    @Test
+    fun aConfigCannotHaveBothFormsOfSwarmId() {
+        assertFailsWith<IllegalArgumentException> {
+            Core(testConfig().apply { swarmIdFunction = SwarmIdFunction { "x" } }) {
+                error("not made")
+            }
+        }
+        // A stream type's own over the one for both: allowed.
+        val swarm = SwarmIdFunction { "x" }
+        val config =
+            testConfig().apply { mainStream = StreamConfig().apply { swarmIdFunction = swarm } }
+        Core(config) { throw UnsatisfiedLinkError("no libp2pml") }
+            .use { fallback ->
+                val given = fallback.getConfig()
+                val main = assertNotNull(given.mainStream)
+                assertEquals(null to swarm, main.swarmId to main.swarmIdFunction)
+                val secondary = assertNotNull(given.secondaryStream)
+                assertEquals(SWARM_ID to null, secondary.swarmId to secondary.swarmIdFunction)
+            }
+    }
+
+    @Test
+    fun aDynamicConfigSendsNoFunction() {
+        val json =
+            DynamicCoreConfig()
+                .apply {
+                    mainStream = StreamConfig().apply { segmentFilter = SegmentFilter { false } }
+                }
+                .toJson()
+        assertFalse(assertNotNull(json.optJSONObject("mainStream")).has("segmentFilter"))
     }
 
     @Test
@@ -494,6 +692,10 @@ class CoreTest {
         val RANGE = ByteRange(0, 999)
         val OTHER_RANGE = ByteRange(0, 499)
         const val MASTER = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\nmedia.m3u8\n"
+        const val BANDWIDTH = 1_280_000.0
+        const val SEGMENT_SECONDS = 4.0
+        // Where range.ts, the last segment of MEDIA, starts.
+        const val LAST_START = 12.0
         const val VOD_SEGMENTS = 4
         val LIVE_PLACEMENT = LiveDelay(36.0, 4.0, 32.0, 44.0)
         const val NO_EVENT_MS = 200L
@@ -514,6 +716,12 @@ class CoreTest {
                 "#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n" +
                 "#EXTINF:4.0,\nseg0.ts\n#EXTINF:4.0,\nseg1.ts\n#EXTINF:4.0,\nseg2.ts\n" +
                 "#EXTINF:4.0,\n#EXT-X-BYTERANGE:1000@0\nrange.ts\n#EXT-X-ENDLIST\n"
+        // MEDIA with an ad break that starts at seg1.ts.
+        val MEDIA_WITH_CUE =
+            MEDIA.replace(
+                "#EXTINF:4.0,\nseg1.ts",
+                "#EXT-X-DISCONTINUITY\n#EXT-X-CUE-OUT:30\n#EXTINF:4.0,\nseg1.ts",
+            )
 
         // No prefetch: the core loads only the segments that the tests ask for. No tracker: the
         // tests need no network.

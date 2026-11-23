@@ -14,7 +14,8 @@
 #include "quickjs.h"
 
 // The platform's side of the bridge: the answers to its calls, one for each,
-// and the core's events that it listens to. The engine calls it on the engine
+// the core's events that it listens to, and its functions that the core
+// calls. The engine calls it on the engine
 // thread; the bytes stay the engine's, valid only during the call. Texts are
 // UTF-8.
 struct p2pml_player_client {
@@ -31,6 +32,13 @@ struct p2pml_player_client {
   // The core's event `name`, with its details as JSON.
   void (*core_event)(void *data, const uint8_t *name, size_t name_length, const uint8_t *json,
                      size_t json_length);
+  // Calls the platform's function `function` (a setting of the core, such as
+  // its segmentFilter) with its argument as JSON. The platform gives its
+  // answer, JSON, to `answer` with `answer_data` during the call, once, or
+  // not at all when it has none.
+  void (*call)(void *data, int32_t function, const uint8_t *json, size_t length,
+               void (*answer)(void *answer_data, const uint8_t *json, size_t length),
+               void *answer_data);
   void *data;
 };
 
@@ -49,8 +57,8 @@ typedef struct p2pml_player p2pml_player;
 p2pml_player *p2pml_player_new(const p2pml_player_client *client);
 // The engine's state (engine.c).
 p2pml_player *p2pml_engine_player(p2pml_engine *engine);
-// Adds playerListen, playerValue, playerData, playerFail and playerCoreEvent
-// to `natives`, which stays the caller's. False when out of memory.
+// Adds playerListen, playerValue, playerData, playerFail, playerCoreEvent and
+// playerCall to `natives`, which stays the caller's. False when out of memory.
 bool p2pml_player_add(JSContext *context, JSValueConst natives);
 // Frees the state, before the runtime is freed.
 void p2pml_player_free(p2pml_player *player, JSContext *context);

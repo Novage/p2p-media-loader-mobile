@@ -47,8 +47,17 @@ that describes the behaviour, not here.
   request itself and plays without P2P (specs/api.md).
 - **The API is not complete.** `Core` does not have the DASH segment index
   of the JS core (`isSegmentIndex`, `processSegmentIndex`), and its settings
-  do not have the JS settings that are functions (specs/api.md, "The
-  settings"). There is no `:proxy` module (specs/api.md).
+  do not have the JS function settings `httpRequestSetup`,
+  `validateP2PSegment` and `customSegmentStorageFactory` (specs/api.md,
+  "Functions in the settings"). There is no `:proxy` module (specs/api.md).
+- **A `segmentFilter` is slow on long live windows.** The core asks it for
+  each listed segment at each playlist refresh, and each call crosses from
+  JS to Kotlin and back with JSON: about 35 µs on a OnePlus 7. A two-hour
+  window of 2 s segments, 3600 segments, then costs about 120 ms of the
+  core's thread for each refresh of each playlist, and the core's own work
+  on it is as much again (specs/api.md, "Functions in the settings"). A
+  call for all the segments of a refresh at once would need a change in the
+  web core, which asks for each segment.
 - **Media3 plays one item at a time through the engine.** Each source of
   `Media3P2PEngine` readies the core for itself when the player prepares it
   (specs/api.md, "Media3"). ExoPlayer prepares the next item of a playlist

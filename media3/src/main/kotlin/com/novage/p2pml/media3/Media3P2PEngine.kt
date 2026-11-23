@@ -66,6 +66,10 @@ internal constructor(
     // Where the playback state goes: the core, or a test.
     private val onPlayback: (PlaybackState) -> Unit = core::updatePlayback,
 ) : AutoCloseable {
+    /**
+     * @throws IllegalArgumentException when a config of [Media3P2PEngineConfig.core] has both
+     *   `swarmId` and `swarmIdFunction`.
+     */
     @JvmOverloads
     public constructor(
         config: Media3P2PEngineConfig = Media3P2PEngineConfig()
