@@ -66,6 +66,35 @@ warning from the compilers, Android lint, detekt (with type resolution),
 clang-tidy or the format checks. The last command installs the sample on a
 connected device or a running emulator.
 
+### The sample in a test swarm
+
+The sample takes optional intent extras: `swarm`, a swarm ID for a test
+swarm that no stranger joins; `stream`, a stream URL in place of BBB live; and
+`highest`, which keeps the player on the rendition with the highest bitrate
+that its decoders support. A rendition is a swarm, so the other peers of a
+test must play the same one. A blank extra is the same as no extra. For
+example, with a new ID:
+
+```bash
+adb shell am start -S -n com.novage.p2pml.sample/.MainActivity --es swarm <id> --ez highest true
+```
+
+`adb shell` gives the command to the device's shell, so quote a URL that has
+`&` or `?` twice: `--es stream "'<url>'"`.
+
+Every 10 s the sample logs (tag `P2pmlSample`) its totals since its last
+start: the bytes that the core loaded over HTTP and P2P, bytes uploaded, and
+the stalls. At the time of the line, it also logs the connections that the
+core holds in all its swarms, and the height of the last video frame.
+
+- A segment that Media3 loads past the core, such as before the core has the
+  item, is not in the totals.
+- A playback error is not a stall: it has a line of its own,
+  `playback error`. A seek is a stall, so do not seek during a window.
+- The difference of two lines gives the totals of a time window. The totals
+  start again when the sample comes back to the front, so a window must not
+  include a stop.
+
 ## License
 
 [Apache License 2.0](LICENSE)

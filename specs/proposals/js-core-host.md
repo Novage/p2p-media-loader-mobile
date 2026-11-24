@@ -322,9 +322,46 @@ it. The Node peer counted the same amounts the other way, to 0.01 MiB, the
 precision of its summary. No segment failed, and the Node peer had no
 stall.
 
-What this does not show yet: the real player (step 2.5), peers behind NATs,
-more than two peers, browser peers (step 2.7), and the phone's CPU, memory
-and temperature (step 2.8).
+**The mixed swarm (step 2.7): passed.** The phone was the OnePlus 7
+(Android 12), with the sample app: Media3's player through `Media3P2PEngine`,
+a debug build. The browser peers were the web demo with HLS.js in the
+Chromium of the Claude desktop app, on the Mac. Both sides ran the web core
+5.0.0-alpha.9. The phone and the Mac were on one Wi-Fi network. Each run used
+the BBB live stream, pinned to 1080p on every peer, a new test swarm, and the
+core's default trackers. Each window is 480 s and starts a minute or more
+after the last peer joined, as in step 1. The sample logs its totals every
+10 s (README.md, "The sample in a test swarm"); the demo shows its own.
+
+| Run (480 s)        | Peer      | HTTP (MiB) | P2P down (MiB) | Up (MiB) | Copies from the origin |
+| ------------------ | --------- | ---------- | -------------- | -------- | ---------------------- |
+| 2 browsers         | browser 1 | 92.41      | 80.67          | 92.42    | 1.000                  |
+|                    | browser 2 | 80.67      | 92.42          | 80.67    |                        |
+| Browser + phone    | phone     | 90.65      | 88.49          | 90.65    | 1.002                  |
+|                    | browser   | 88.49      | 89.98          | 88.49    |                        |
+| 2 browsers + phone | phone     | 59.37      | 119.38         | 118.75   | 1.000                  |
+|                    | browser 1 | 64.13      | 114.39         | 96.48    |                        |
+|                    | browser 2 | 55.03      | 123.51         | 141.84   |                        |
+
+- **Interop: passed.** The phone downloaded from browser peers and uploaded
+  to them in both runs. It held its first peer within 11 s of its start, and
+  in the third run both peers within 11 s. Chromium gives its local
+  addresses as mDNS names; this did not stop a connection on one network.
+- **P2P ratio: passed.** The copies of each segment from the origin are
+  (the sum of all peers' HTTP bytes) / (the mean of the peers' HTTP and P2P
+  bytes). With the phone they are 1.002 and 1.000, against 1.000 for two
+  browsers. In the third run, the three peers took about a third of the
+  stream each over HTTP.
+- No peer stalled in any run, and the phone logged no playback error.
+- The bytes match across the peers: the sum of the P2P downloads equals the
+  sum of the uploads, within 0.67 MiB, because the two sides sample 4 to 5 s
+  apart.
+- The sample counts only what its core loaded. No media went past the core
+  in a window: the phone's HTTP and P2P bytes together equal each browser's,
+  within 0.67 MiB.
+
+What this does not show yet: peers behind NATs or on other networks, long
+runs, the phone's CPU, memory (also on VOD with a peer) and temperature, and
+the background check (step 2.8).
 
 **CPU and memory, an early measurement (after step 2.4c).** The same phone
 and test, at 1080p, with no player, in runs of 5 to 10 minutes. The CPU is
