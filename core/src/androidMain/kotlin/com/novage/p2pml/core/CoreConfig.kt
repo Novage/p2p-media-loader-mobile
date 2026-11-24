@@ -8,8 +8,8 @@ import org.json.JSONObject
  * The settings of a stream that the core can change while it runs, as the JS core's
  * `DynamicStreamConfig` (specs/api.md), with the same names and meanings. Null is unset: the core's
  * default, or with [Core.applyDynamicConfig] the value that the core has now. Numbers must be
- * finite, as JSON's. The async JS function settings (`httpRequestSetup`, `validateP2PSegment`) are
- * not in the API (KNOWN-ISSUES.md).
+ * finite, as JSON's. Its functions, [httpRequestSetup] and [validateP2PSegment], run on threads of
+ * the library's (specs/api.md, "Functions in the settings").
  */
 public open class DynamicStreamConfig {
     public var isP2PUploadDisabled: Boolean? = null
@@ -38,12 +38,14 @@ public open class DynamicStreamConfig {
     public var webRtcOfferTimeoutMs: Long? = null
     public var webRtcIceGatheringTimeoutMs: Long? = null
     public var webRtcConnectionTimeoutMs: Long? = null
+    public var httpRequestSetup: HttpRequestSetup? = null
+    public var validateP2PSegment: P2PSegmentValidator? = null
 }
 
 /**
  * The settings of a stream, as the JS core's `StreamConfig` (specs/api.md): the dynamic ones, and
  * the ones that are not dynamic, as in JS: [announceTrackers], [swarmId] (or [swarmIdFunction]),
- * [streamIdBuilder] and [segmentFilter]. The functions run on the core's thread (specs/api.md,
+ * [streamIdBuilder] and [segmentFilter], whose functions run on the core's thread (specs/api.md,
  * "Functions in the settings").
  */
 public open class StreamConfig : DynamicStreamConfig() {
@@ -76,10 +78,11 @@ public class CoreConfig : StreamConfig() {
  * The changes of the core's settings while it runs, as the JS core's `DynamicCoreConfig`
  * (specs/api.md): for [Core.applyDynamicConfig]. Only the set (not null) fields change: the others
  * keep their values. Of a config given as [mainStream] or [secondaryStream], only the stream
- * settings apply: a [StreamConfig] goes without its `announceTrackers`, `swarmId` and functions,
- * which do not change. As in JS, [segmentMemoryStorageLimit] applies from the next segment storage
- * that the core makes (at the first load, and at the first after [Core.destroy]), and
- * [trackerClientVersionPrefix] does not apply.
+ * settings apply: a [StreamConfig] goes without its `announceTrackers`, `swarmId` and its static
+ * functions (`swarmIdFunction`, `streamIdBuilder`, `segmentFilter`), which do not change. As in JS,
+ * [segmentMemoryStorageLimit] applies from the next segment storage that the core makes (at the
+ * first load, and at the first after [Core.destroy]), and [trackerClientVersionPrefix] does not
+ * apply.
  */
 public class DynamicCoreConfig : DynamicStreamConfig() {
     /** The memory for segments, in MiB. */
@@ -136,29 +139,32 @@ private val DOUBLES: List<KMutableProperty1<DynamicStreamConfig, Double?>> =
     )
 
 /**
- * The set fields as a JSON object, with the JS names. With [functions], also the functions, as its
- * markers; without, none.
+ * The set fields as a JSON object, with the JS names, and the functions as their markers of
+ * [functions]. With [static] false, only the dynamic settings: a [StreamConfig] given as a
+ * [DynamicCoreConfig]'s stream goes without its others, which JS does not all ignore in a change.
  *
- * @throws IllegalArgumentException with [functions], when a config has both [StreamConfig.swarmId]
- *   and [StreamConfig.swarmIdFunction].
+ * @throws IllegalArgumentException when a config has both [StreamConfig.swarmId] and
+ *   [StreamConfig.swarmIdFunction].
  */
-internal fun DynamicStreamConfig.toJson(functions: FunctionTable? = null): JSONObject {
+internal fun DynamicStreamConfig.toJson(
+    functions: FunctionTable,
+    static: Boolean = true,
+): JSONObject {
     val json = JSONObject()
     for (field in BOOLEANS + INTS + LONGS + DOUBLES) {
         json.putOpt(field.name, field.get(this))
     }
     json.putOpt("rtcConfig", rtcConfig?.toJson())
-    if (this is StreamConfig) {
-        json.putOpt("announceTrackers", announceTrackers?.let(::JSONArray))
-        json.putOpt("swarmId", swarmId)
-        if (functions != null) {
-            require(swarmId == null || swarmIdFunction == null) {
-                "A config has both swarmId and swarmIdFunction"
-            }
-            json.putOpt("swarmId", swarmIdFunction?.let { functions.marker(it) })
-            json.putOpt("streamIdBuilder", streamIdBuilder?.let { functions.marker(it) })
-            json.putOpt("segmentFilter", segmentFilter?.let { functions.marker(it) })
+    json.putOpt("httpRequestSetup", httpRequestSetup?.let { functions.marker(it) })
+    json.putOpt("validateP2PSegment", validateP2PSegment?.let { functions.marker(it) })
+    if (static && this is StreamConfig) {
+        require(swarmId == null || swarmIdFunction == null) {
+            "A config has both swarmId and swarmIdFunction"
         }
+        json.putOpt("announceTrackers", announceTrackers?.let(::JSONArray))
+        json.putOpt("swarmId", swarmId ?: swarmIdFunction?.let { functions.marker(it) })
+        json.putOpt("streamIdBuilder", streamIdBuilder?.let { functions.marker(it) })
+        json.putOpt("segmentFilter", segmentFilter?.let { functions.marker(it) })
     }
     // The common settings, and the settings of each stream type.
     when (this) {
@@ -171,20 +177,12 @@ internal fun DynamicStreamConfig.toJson(functions: FunctionTable? = null): JSONO
         is DynamicCoreConfig -> {
             json.putOpt("segmentMemoryStorageLimit", segmentMemoryStorageLimit)
             json.putOpt("trackerClientVersionPrefix", trackerClientVersionPrefix)
-            json.putOpt("mainStream", mainStream?.dynamicJson())
-            json.putOpt("secondaryStream", secondaryStream?.dynamicJson())
+            json.putOpt("mainStream", mainStream?.toJson(functions, static = false))
+            json.putOpt("secondaryStream", secondaryStream?.toJson(functions, static = false))
         }
     }
     return json
 }
-
-// Without the settings that are not dynamic, which a StreamConfig in its place has: JS does not
-// ignore announceTrackers in a change.
-private fun DynamicStreamConfig.dynamicJson() =
-    toJson().apply {
-        remove("announceTrackers")
-        remove("swarmId")
-    }
 
 private fun RtcConfig.toJson() =
     JSONObject()
@@ -215,6 +213,9 @@ internal fun <T : StreamConfig> T.readFrom(json: JSONObject, functions: Function
     swarmIdFunction = functions.functionOf(json.value("swarmId")) as? SwarmIdFunction
     streamIdBuilder = functions.functionOf(json.value("streamIdBuilder")) as? StreamIdBuilder
     segmentFilter = functions.functionOf(json.value("segmentFilter")) as? SegmentFilter
+    httpRequestSetup = functions.functionOf(json.value("httpRequestSetup")) as? HttpRequestSetup
+    validateP2PSegment =
+        functions.functionOf(json.value("validateP2PSegment")) as? P2PSegmentValidator
     if (this is CoreConfig) {
         segmentMemoryStorageLimit = (json.value("segmentMemoryStorageLimit") as? Number)?.toDouble()
         trackerClientVersionPrefix = json.value("trackerClientVersionPrefix") as? String

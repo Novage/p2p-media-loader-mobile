@@ -64,8 +64,8 @@ are the JS types of the same names: the settings that the core can change
 while it runs. As in JS, they do not have `announceTrackers` and `swarmId`
 (the swarm's name, which the core gives a stream when it registers it).
 `StreamConfig` extends `DynamicStreamConfig` with these two and the
-function settings (see below), which are not dynamic either, so a
-`StreamConfig` given in place of a `DynamicStreamConfig` compiles;
+synchronous function settings (see below), which are not dynamic either,
+so a `StreamConfig` given in place of a `DynamicStreamConfig` compiles;
 `applyDynamicConfig` does not send them. Of a config given as
 `mainStream` or `secondaryStream`, only the stream settings apply. As in
 JS, `DynamicCoreConfig` has the common settings: `segmentMemoryStorageLimit`
@@ -114,8 +114,42 @@ function objects back.
   for each source while it gives an answer; after a throw, the next stream
   of the source asks again.
 
-The other function settings of JS (`httpRequestSetup`, `validateP2PSegment`,
-`customSegmentStorageFactory`) are not in the API (KNOWN-ISSUES.md).
+`DynamicStreamConfig` has the JS core's async function settings, which
+are dynamic in JS too: `applyDynamicConfig` can set or replace them, and
+`getConfig()` gives the current objects back.
+
+- **`httpRequestSetup`** (`HttpRequestSetup`): before each HTTP request of
+  a segment, with an `HttpRequestSetupContext`: the segment's URL and byte
+  range, and the bytes that the request asks for (`requestByteRange`). It
+  gives an `HttpRequest(url, headers)` of the app's own, such as a signed
+  URL or a token header, or null for the core's request. Where the request
+  asks for part of the file, the core adds its `Range` header unless the
+  app's headers have one: in JS, the app's `Request` must have it. A throw
+  fails that request, and the core tries again, as for an HTTP error. This
+  is how the core's own requests get what Media3's `upstream` adds to the
+  player's (KNOWN-ISSUES.md).
+- **`validateP2PSegment`** (`P2PSegmentValidator`): for each download that
+  holds a peer's bytes, with `P2PSegmentContext(url, byteRange, data)`;
+  false (or a throw) closes the connection to that peer.
+- **Where they run:** on a thread pool of the core's (`p2pml-functions`),
+  not on the core's thread: they can take their time, as an async JS
+  function does, and a call to `Core` from them does not deadlock. A
+  function must return, such as with a timeout on its own I/O: one that
+  never returns holds its thread, and the core, which tries again, starts a
+  new call on a new thread. The core waits for the answer as for a Promise,
+  with no time limit. The JS abort signal does not reach the function: the
+  core drops a late answer, as in JS. `close()` does not interrupt a
+  function that runs. A throw is handled as for the synchronous functions.
+  Unlike a JS async function, a function can run on several threads at
+  once: it must be thread-safe.
+- **Dynamic:** a change replaces a function, and cannot remove it (JSON has
+  no `undefined`): to switch one off, set one that gives null or true. Each
+  new object stays with the core until `close()`: give the core one object
+  that reads what changes, such as a token (KNOWN-ISSUES.md). A validator
+  that a change sets applies to the peers that connect after it, as in JS.
+
+The function setting `customSegmentStorageFactory` is not in the API
+(KNOWN-ISSUES.md).
 
 ## Where Kotlin differs from JS
 

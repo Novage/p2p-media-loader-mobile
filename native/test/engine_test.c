@@ -233,6 +233,28 @@ static void fake_player_call(void *data, int32_t function, const uint8_t *json, 
   JS_FreeValue(context, global);
 }
 
+// The platform's async functions: fakePlayer.onCallAsync(function, id, json,
+// bytes) gets each call, with its bytes as a Uint8Array or undefined; the test
+// answers it with fakePlayer.send("answer", id, json).
+static void fake_player_call_async(void *data, int32_t function, int32_t id, const uint8_t *json,
+                                   size_t length, const uint8_t *bytes, size_t bytes_length) {
+  JSContext *context = p2pml_engine_context(data);
+  JSValue global = JS_GetGlobalObject(context);
+  JSValue player = JS_GetPropertyStr(context, global, "fakePlayer");
+  JSValue on_call = JS_GetPropertyStr(context, player, "onCallAsync");
+  JSValue args[4] = {JS_NewInt32(context, function), JS_NewInt32(context, id),
+                     JS_NewStringLen(context, (const char *)json, length),
+                     bytes != NULL ? bytes_value(context, bytes, bytes_length) : JS_UNDEFINED};
+  JSValue result = JS_Call(context, on_call, player, 4, args);
+  CHECK(!JS_IsException(result));
+  JS_FreeValue(context, result);
+  JS_FreeValue(context, args[3]);
+  JS_FreeValue(context, args[2]);
+  JS_FreeValue(context, on_call);
+  JS_FreeValue(context, player);
+  JS_FreeValue(context, global);
+}
+
 static void fake_start(void *data, int32_t id, const char *method, const char *url,
                        size_t header_count, const char *const *headers) {
   JSContext *context = p2pml_engine_context(data);
@@ -268,6 +290,7 @@ static void *run_engine(void *data) {
                                      .fail = fake_player_fail,
                                      .core_event = fake_player_core_event,
                                      .call = fake_player_call,
+                                     .call_async = fake_player_call_async,
                                      .data = args->engine};
   CHECK(p2pml_engine_run(args->engine, args->log != NULL ? capture : no_line_expected, args->log,
                          &fake, &fake_ws, &fake_player));

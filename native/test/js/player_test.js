@@ -62,19 +62,24 @@ const answerTo = async (id) => {
   throw new Error(`no answer to call ${id}`);
 };
 
-// Waits for a request of `url` by the core that no earlier step used, and
-// returns it.
-const requestOf = async (url) => {
+// Waits for an item of `list` that matches `matches` and that no earlier
+// step used, marks it as used, and returns it.
+const nextUnused = async (list, matches, what) => {
   for (let i = 0; i < 200; i++) {
-    const request = fakeHttp.started.find((r) => r.url === url && !r.used);
-    if (request !== undefined) {
-      request.used = true;
-      return request;
+    const item = list.find((x) => matches(x) && !x.used);
+    if (item !== undefined) {
+      item.used = true;
+      return item;
     }
     await tasksRun();
   }
-  throw new Error(`no request of ${url}`);
+  throw new Error(`no ${what}`);
 };
+
+// Waits for a request of `url` by the core that no earlier step used, and
+// returns it.
+const requestOf = (url) =>
+  nextUnused(fakeHttp.started, (r) => r.url === url, `request of ${url}`);
 
 // No prefetch: the core loads only the segments that the tests ask for.
 // The platform's functions (fakePlayer.onCall): 1 names the swarm, 2 builds
@@ -603,6 +608,95 @@ test("the platform's functions name the swarm, the streams and the shared segmen
       assertEquals((await query("streams")).length, 0, "no answer");
     } finally {
       fakePlayer.onCall = asWithout;
+      fakePlayer.send("destroy", 0);
+    }
+  }));
+
+test("the platform's async functions set up a request and validate a segment", () =>
+  inOrder(async () => {
+    const calls = [];
+    fakePlayer.onCallAsync = (n, id, json, bytes) =>
+      calls.push({ n, id, argument: JSON.parse(json), bytes });
+    const answer = (call, value) =>
+      fakePlayer.send("answer", call.id, JSON.stringify(value));
+    // The next call of function `n` that no earlier step used.
+    const nextCall = (n) => nextUnused(calls, (c) => c.n === n, `call of ${n}`);
+    try {
+      // Dynamic, as in JS.
+      fakePlayer.send(
+        "dynamicConfig",
+        0,
+        JSON.stringify({
+          httpRequestSetup: { function: 4 },
+          validateP2PSegment: { function: 5 },
+        }),
+      );
+      giveManifests();
+      // A request of the platform's: its URL and headers, with the core's
+      // Range.
+      fakePlayer.send("load", 901, BASE + "range.m4s", "0-999");
+      const setup = await nextCall(4);
+      assertEquals(
+        JSON.stringify(setup.argument),
+        JSON.stringify({
+          segmentUrl: BASE + "range.m4s",
+          segmentByteRange: { start: 0, end: 999 },
+          requestByteRange: { start: 0, end: 999 },
+        }),
+        "the setup's arguments",
+      );
+      answer(setup, {
+        value: { url: BASE + "signed.m4s?t=1", headers: { "X-Token": "1" } },
+      });
+      const signed = await serve(BASE + "signed.m4s?t=1", new Uint8Array(1000));
+      assertEquals(signed.headers["x-token"], "1", "the platform's header");
+      assertEquals(signed.headers.range, "bytes=0-999", "the core's range");
+      assertEquals((await answerTo(901)).kind, "segment", "the load");
+
+      // null keeps the core's request.
+      fakePlayer.send("load", 902, BASE + "seg3.m4s");
+      answer(await nextCall(4), { value: null });
+      await serve(BASE + "seg3.m4s", new Uint8Array([7]));
+      assertEquals((await answerTo(902)).kind, "segment", "the core's request");
+
+      // The validator, as the core's P2P path calls it, with the bytes.
+      let validate;
+      await withCoreMethod(
+        "isSegmentLoadable",
+        function () {
+          validate = this.getConfig().mainStream.validateP2PSegment;
+          return false;
+        },
+        () => query("loadable", BASE + "seg0.m4s"),
+      );
+      const valid = validate(
+        BASE + "seg0.m4s",
+        undefined,
+        new Uint8Array([1, 2]).buffer,
+      );
+      const call = await nextCall(5);
+      assertEquals(hex(call.bytes), "01 02", "the segment's bytes");
+      assertEquals(call.argument.url, BASE + "seg0.m4s", "its URL");
+      answer(call, { value: true });
+      assertEquals(await valid, true, "the answer");
+      const failing = validate(
+        BASE + "seg0.m4s",
+        undefined,
+        new ArrayBuffer(1),
+      );
+      answer(await nextCall(5), { error: "no hash" });
+      assertEquals(
+        (await rejection(failing)).message,
+        "no hash",
+        "a throw of the platform's",
+      );
+    } finally {
+      // The setup cannot go: it keeps the core's request from now on.
+      fakePlayer.onCallAsync = (n, id) =>
+        fakePlayer.send("answer", id, JSON.stringify({ value: null }));
+      for (const call of calls) {
+        if (call.n === 4 && !call.used) answer(call, { value: null });
+      }
       fakePlayer.send("destroy", 0);
     }
   }));

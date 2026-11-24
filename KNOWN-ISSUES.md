@@ -47,9 +47,16 @@ that describes the behaviour, not here.
   request itself and plays without P2P (specs/api.md).
 - **The API is not complete.** `Core` does not have the DASH segment index
   of the JS core (`isSegmentIndex`, `processSegmentIndex`), and its settings
-  do not have the JS function settings `httpRequestSetup`,
-  `validateP2PSegment` and `customSegmentStorageFactory` (specs/api.md,
-  "Functions in the settings"). There is no `:proxy` module (specs/api.md).
+  do not have the JS function setting `customSegmentStorageFactory`
+  (specs/api.md, "Functions in the settings"). There is no `:proxy` module
+  (specs/api.md).
+- **A function of a dynamic change stays until `close()`.** Each new
+  `httpRequestSetup` or `validateP2PSegment` object that `applyDynamicConfig`
+  gives the core keeps a number in the bridge, in Kotlin and in JS, with
+  what it holds, until the core closes. An app that makes a new object at
+  each change, such as for each new token, grows the core's memory: it
+  gives one object that reads what changes (specs/api.md, "Functions in
+  the settings"). A fix releases a number that no setting uses.
 - **A `segmentFilter` is slow on long live windows.** The core asks it for
   each listed segment at each playlist refresh, and each call crosses from
   JS to Kotlin and back with JSON: about 35 µs on a OnePlus 7. A two-hour
@@ -96,7 +103,9 @@ that describes the behaviour, not here.
   the core does not load, but the core loads its segments itself, as in a
   browser. A cached segment loads again, and a segment from the core does
   not go into the cache. A segment that needs the signer or the headers
-  fails in the core, after its retries, and then loads through `upstream`.
+  fails in the core, after its retries, and then loads through `upstream`,
+  unless the app gives the core the same with `httpRequestSetup`
+  (specs/api.md, "Functions in the settings").
 - **`Media3P2PEngine` makes HLS sources only.** Its factory takes the place
   of `DefaultMediaSourceFactory`: a DASH, SmoothStreaming or progressive
   item fails, and the factory does not add what `DefaultMediaSourceFactory`

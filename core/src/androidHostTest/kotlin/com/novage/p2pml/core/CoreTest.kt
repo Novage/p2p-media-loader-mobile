@@ -29,7 +29,7 @@ import okio.Buffer
 // The public Core end to end: the JNI glue, the engine's glue around the real core, and a local
 // server. The rules of the glue are tested in native/test/js/player_test.js.
 // One test for each rule of the core.
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LargeClass")
 class CoreTest {
     private val segment = ByteArray(SEGMENT_BYTES) { (it % PATTERN).toByte() }
     private val server =
@@ -53,6 +53,20 @@ class CoreTest {
                                     .addHeader("Content-Range", "bytes 0-999/5000")
                                     .body(Buffer().write(ByteArray(RANGE_BYTES)))
                                     .build()
+                            // Only with the app's token, and the core's range.
+                            "/signed.ts" ->
+                                if (
+                                    request.headers["X-Token"] == "1" &&
+                                        request.headers["Range"] == "bytes=0-999"
+                                ) {
+                                    MockResponse.Builder()
+                                        .code(PARTIAL)
+                                        .addHeader("Content-Range", "bytes 0-999/5000")
+                                        .body(Buffer().write(ByteArray(RANGE_BYTES)))
+                                        .build()
+                                } else {
+                                    MockResponse.Builder().code(FORBIDDEN).build()
+                                }
                             else -> MockResponse.Builder().code(NOT_FOUND).build()
                         }
                 }
@@ -444,14 +458,147 @@ class CoreTest {
     }
 
     @Test
-    fun aDynamicConfigSendsNoFunction() {
+    fun aDynamicConfigSendsNoStaticFunction() {
         val json =
             DynamicCoreConfig()
                 .apply {
-                    mainStream = StreamConfig().apply { segmentFilter = SegmentFilter { false } }
+                    mainStream =
+                        StreamConfig().apply {
+                            segmentFilter = SegmentFilter { false }
+                            httpRequestSetup = HttpRequestSetup { null }
+                        }
                 }
-                .toJson()
-        assertFalse(assertNotNull(json.optJSONObject("mainStream")).has("segmentFilter"))
+                .toJson(FunctionTable())
+        val main = assertNotNull(json.optJSONObject("mainStream"))
+        assertFalse(main.has("segmentFilter"))
+        assertTrue(main.has("httpRequestSetup"))
+    }
+
+    @Test
+    fun httpRequestSetupGivesTheCoresRequestTheAppsUrlAndHeaders() {
+        val contexts = LinkedBlockingQueue<HttpRequestSetupContext>()
+        val threads = LinkedBlockingQueue<String>()
+        val setup = HttpRequestSetup { context ->
+            contexts.put(context)
+            threads.put(Thread.currentThread().name)
+            when {
+                context.segmentUrl.endsWith("/range.ts") ->
+                    HttpRequest(url("/signed.ts?t=1"), mapOf("X-Token" to "1"))
+                context.segmentUrl.endsWith("/seg1.ts") -> error("no token")
+                else -> null
+            }
+        }
+        withCore(testConfig().apply { httpRequestSetup = setup }) { signed ->
+            giveManifests(signed)
+            assertEquals(RANGE_BYTES, signed.loadSegment(url("/range.ts"), RANGE).data.size)
+            assertEquals(
+                HttpRequestSetupContext(
+                    url("/range.ts"),
+                    RANGE,
+                    RequestByteRange(RANGE.start, RANGE.end),
+                ),
+                contexts.first(),
+            )
+            assertEquals("p2pml-functions", threads.first(), "off the engine thread")
+            // null keeps the core's request.
+            assertContentEquals(segment, signed.loadSegment(url("/seg0.ts")).data)
+            // A throw fails that request.
+            assertFailsWith<CoreRequestError> { signed.loadSegment(url("/seg1.ts")) }
+            assertSame(setup, assertNotNull(signed.getConfig().mainStream).httpRequestSetup)
+        }
+    }
+
+    @Test
+    fun applyDynamicConfigSetsTheAsyncFunctions() {
+        val tokens = LinkedBlockingQueue<String>()
+        giveManifests()
+        core.applyDynamicConfig(
+            DynamicCoreConfig().apply {
+                mainStream =
+                    StreamConfig().apply {
+                        httpRequestSetup = HttpRequestSetup { context ->
+                            tokens.put(context.segmentUrl)
+                            null
+                        }
+                        // Static: not in a change.
+                        segmentFilter = SegmentFilter { false }
+                    }
+            }
+        )
+        assertContentEquals(segment, core.loadSegment(url("/seg0.ts")).data)
+        assertEquals(listOf(url("/seg0.ts")), tokens.toList())
+        assertTrue(core.hasSegment(url("/seg0.ts")), "the static filter did not come")
+    }
+
+    @Test
+    fun aValidatorGetsTheSegmentsBytesOnAThreadOfItsOwn() {
+        val failures = LinkedBlockingQueue<Throwable>()
+        val threads = LinkedBlockingQueue<String>()
+        val table = FunctionTable(failed = failures::put)
+        val contexts = LinkedBlockingQueue<P2PSegmentContext>()
+        val marker =
+            table.marker(
+                P2PSegmentValidator { context ->
+                    contexts.put(context)
+                    threads.put(Thread.currentThread().name)
+                    context.data.size == 2
+                }
+            )
+        val number = marker.getInt("function")
+        val answers = LinkedBlockingQueue<String>()
+        val json = """{"url":"https://example.com/seg0.ts","byteRange":{"start":0,"end":1}}"""
+        try {
+            table.callAsync(number, json, byteArrayOf(1, 2), answers::put)
+            assertEquals("""{"value":true}""", answers.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            val context = contexts.first()
+            assertEquals(ByteRange(0, 1), context.byteRange)
+            assertContentEquals(byteArrayOf(1, 2), context.data)
+            assertEquals("p2pml-functions", threads.first(), "off the caller's thread")
+            // A throw of the answer's send stays on its thread, which would end the app.
+            table.callAsync(number, json, null) { error("send failed") }
+            val failure = assertNotNull(failures.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            assertEquals("send failed", failure.message)
+            // A number that the table does not have still answers: JS waits for it.
+            table.callAsync(number + 1, json, null, answers::put)
+            assertEquals(
+                """{"error":"no such function"}""",
+                answers.poll(TIMEOUT_SECONDS, TimeUnit.SECONDS),
+            )
+            // After the close, no answer: JS takes none.
+            table.close()
+            table.callAsync(number, json, byteArrayOf(1, 2), answers::put)
+            assertEquals(null, answers.poll(NO_EVENT_MS, TimeUnit.MILLISECONDS))
+        } finally {
+            table.close()
+        }
+    }
+
+    @Test
+    fun asyncFunctionsRunAtTheSameTime() {
+        // Each waits for the other: one thread for both would wait for good.
+        val both = CountDownLatch(2)
+        val table = FunctionTable()
+        val number =
+            table
+                .marker(
+                    P2PSegmentValidator {
+                        both.countDown()
+                        both.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    }
+                )
+                .getInt("function")
+        val answers = LinkedBlockingQueue<String>()
+        try {
+            repeat(2) { table.callAsync(number, "{}", null, answers::put) }
+            repeat(2) {
+                assertEquals(
+                    """{"value":true}""",
+                    answers.poll(TIMEOUT_SECONDS * 2, TimeUnit.SECONDS),
+                )
+            }
+        } finally {
+            table.close()
+        }
     }
 
     @Test
@@ -683,6 +830,7 @@ class CoreTest {
         const val SERVER_ERROR = 500
         const val PARTIAL = 206
         const val NOT_FOUND = 404
+        const val FORBIDDEN = 403
         const val DEFAULT_HTTP_TRIES = 3
         const val MAIN_HTTP_TRIES = 5
         const val SWARM_ID = "a\"b"

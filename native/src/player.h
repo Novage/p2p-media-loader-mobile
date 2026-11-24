@@ -39,6 +39,13 @@ struct p2pml_player_client {
   void (*call)(void *data, int32_t function, const uint8_t *json, size_t length,
                void (*answer)(void *answer_data, const uint8_t *json, size_t length),
                void *answer_data);
+  // Calls the platform's async function `function` (such as the core's
+  // httpRequestSetup) with its argument as JSON, and `bytes` (NULL for none),
+  // with no wait: the platform answers later with the event answer(id, json),
+  // and not at all when the engine closes first. The bytes stay the engine's,
+  // valid only during the call.
+  void (*call_async)(void *data, int32_t function, int32_t id, const uint8_t *json, size_t length,
+                     const uint8_t *bytes, size_t bytes_length);
   void *data;
 };
 
@@ -57,8 +64,8 @@ typedef struct p2pml_player p2pml_player;
 p2pml_player *p2pml_player_new(const p2pml_player_client *client);
 // The engine's state (engine.c).
 p2pml_player *p2pml_engine_player(p2pml_engine *engine);
-// Adds playerListen, playerValue, playerData, playerFail, playerCoreEvent and
-// playerCall to `natives`, which stays the caller's. False when out of memory.
+// Adds playerListen, playerValue, playerData, playerFail, playerCoreEvent,
+// playerCall and playerCallAsync to `natives`, which stays the caller's. False when out of memory.
 bool p2pml_player_add(JSContext *context, JSValueConst natives);
 // Frees the state, before the runtime is freed.
 void p2pml_player_free(p2pml_player *player, JSContext *context);

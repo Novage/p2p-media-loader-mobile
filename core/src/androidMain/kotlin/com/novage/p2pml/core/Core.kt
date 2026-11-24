@@ -54,11 +54,12 @@ public class CoreRequestError(public val type: String, message: String) : IOExce
  * gives a value blocks its thread until the core's thread answers, also where JS answers at once
  * (such as [getStreams] or [hasSegment]), so call them off the main thread.
  *
- * The core runs in a JS engine with a thread of its own: [close] ends it. The functions of its
- * settings run on that thread: a call that waits for the core throws [IllegalStateException] there,
- * and a wait for the core on another thread stops the core for good. Without the library's native
- * code (on 32-bit x86, see KNOWN-ISSUES.md), there is no core: no segment is loadable, the
- * functions are never called, and the player loads every request itself.
+ * The core runs in a JS engine with a thread of its own: [close] ends it. The synchronous functions
+ * of its settings run on that thread: a call that waits for the core throws [IllegalStateException]
+ * there, and a wait for the core on another thread stops the core for good. The async ones run on a
+ * pool of the core's. Without the library's native code (on 32-bit x86, see KNOWN-ISSUES.md), there
+ * is no core: no segment is loadable, the functions are never called, and the player loads every
+ * request itself.
  *
  * @throws IllegalArgumentException when a config of [CoreConfig] has both `swarmId` and
  *   `swarmIdFunction`.
@@ -72,8 +73,14 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
         config: CoreConfig = CoreConfig()
     ) : this(config, { JsEngine(libraryUserAgent()) })
 
-    // The functions of the settings, which the JSON names by number.
-    private val functions = FunctionTable()
+    // The functions of the settings, which the JSON names by number, with the threads of the async
+    // ones.
+    private val functions =
+        FunctionTable(
+            failed = { e ->
+                engine?.log?.write(JsLog.Level.WARN, "An async function's answer was lost: $e")
+            }
+        )
     private val config = config.toJson(functions).toString()
     private val engine: JsEngine? =
         try {
@@ -97,6 +104,9 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
     init {
         session.onEvent = events::post
         session.onCall = functions::call
+        session.onCallAsync = { function, id, json, bytes ->
+            functions.callAsync(function, json, bytes) { answer -> session.answerCall(id, answer) }
+        }
         session.send("start", listOf(this.config))
     }
 
@@ -141,7 +151,7 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
      * @throws org.json.JSONException when a number of [config] is not finite.
      */
     public fun applyDynamicConfig(config: DynamicCoreConfig) {
-        session.send("dynamicConfig", listOf(config.toJson().toString()))
+        session.send("dynamicConfig", listOf(config.toJson(functions).toString()))
     }
 
     /**
@@ -281,6 +291,7 @@ public class Core internal constructor(config: CoreConfig, newEngine: () -> JsEn
      */
     override fun close() {
         events.close()
+        functions.close()
         engine?.close()
     }
 

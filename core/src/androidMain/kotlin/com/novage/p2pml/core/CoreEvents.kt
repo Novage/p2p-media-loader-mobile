@@ -392,8 +392,8 @@ internal fun JSONObject.streamType(name: String) = streamTypeOf(optString(name))
 private fun JSONObject.downloadSource() =
     if (optString("downloadSource") == "p2p") DownloadSource.P2P else DownloadSource.HTTP
 
-internal fun JSONObject.byteRangeOf(): ByteRange? =
-    optJSONObject("byteRange")?.let { ByteRange(it.optLong("start"), it.optLong("end")) }
+internal fun JSONObject.byteRangeOf(name: String = "byteRange"): ByteRange? =
+    optJSONObject(name)?.let { ByteRange(it.optLong("start"), it.optLong("end")) }
 
 private fun JSONObject.segment(): Segment =
     getJSONObject("segment").let {

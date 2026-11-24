@@ -155,6 +155,13 @@ internal class JsEngine(userAgent: String, internal val log: JsLog = JsLog.logca
 
                     override fun call(function: Int, json: ByteArray) =
                         player.onCall(function, json.decodeToString())?.encodeToByteArray()
+
+                    override fun callAsync(
+                        function: Int,
+                        id: Int,
+                        json: ByteArray,
+                        bytes: ByteArray?,
+                    ) = player.onCallAsync(function, id, json.decodeToString(), bytes)
                 }
             if (!NativeEngine.run(handle, sink, httpSink, wsSink, playerSink)) {
                 log.write(JsLog.Level.ERROR, "The JS runtime or its globals could not be created")

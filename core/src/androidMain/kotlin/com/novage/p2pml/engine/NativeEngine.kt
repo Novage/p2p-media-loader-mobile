@@ -154,5 +154,11 @@ internal object NativeEngine {
          * answer as JSON, or null for none.
          */
         fun call(function: Int, json: ByteArray): ByteArray?
+
+        /**
+         * Calls the platform's async [function] with its argument as [json] and [bytes], with no
+         * wait: the platform answers call [id] later, with the bridge's `answer` event.
+         */
+        fun callAsync(function: Int, id: Int, json: ByteArray, bytes: ByteArray?)
     }
 }

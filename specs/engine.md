@@ -404,10 +404,11 @@ playback state.
     object `config` as its settings and the HLS parser. QuickJS loads the
     module in the Promise jobs of this event's task, which run before the
     next task: the next event finds the core. A function of the platform's
-    in the settings (`swarmId`, `streamIdBuilder` or `segmentFilter`, for
-    both stream types or in `mainStream` or `secondaryStream`) is
-    `{"function": n}` there: the glue gives the core one JS function for
-    each `n` (see the functions below).
+    in the settings (`swarmId`, `streamIdBuilder`, `segmentFilter`,
+    `httpRequestSetup` or `validateP2PSegment`, for both stream types or in
+    `mainStream` or `secondaryStream`) is `{"function": n}` there: the
+    glue gives the core one JS function for each `n` (see the functions
+    below).
   - `manifest(id, url, requestedUrl, data)` is `processManifest`, with the
     URL after redirects and the one asked for, as the HLS.js adapter gives
     them: a query, answered at once with the core's result and the
@@ -423,7 +424,10 @@ playback state.
     `config`, a function of the platform's is `{"function": n}` again, so
     that `getConfig()` gives the platform's function object back.
   - `dynamicConfig(config)` is `applyDynamicConfig`, with the JSON object
-    `config`; `manifestResponseUrl(url)` is `setManifestResponseUrl`.
+    `config`, whose functions are markers as in `start`;
+    `manifestResponseUrl(url)` is `setManifestResponseUrl`.
+  - `answer(id, json)` answers the platform's async call `id` (see the
+    async functions below).
   - `load(id, url, range)` is `loadSegment`: as in JS, a URL that the core
     does not know fails.
   - `abort(url, range)` is `abortSegmentLoading`; `destroy()` is `destroy`,
@@ -470,6 +474,18 @@ playback state.
   JS core keeps a `swarmId` function's answer by function. On the engine
   thread, a call that waits for an answer of the bridge throws
   `IllegalStateException` in Kotlin: it would wait for itself.
+- **The platform's async functions** (`httpRequestSetup`,
+  `validateP2PSegment`, which the glue knows by their keys): the JS function
+  of `n` returns a Promise. It keeps the Promise by a call id, and calls the
+  native `playerCallAsync(n, id, json, bytes)`, with the segment's
+  `ArrayBuffer` for the validator, copied once into a Kotlin `ByteArray`.
+  The engine calls the client's `call_async` (`PlayerSink.callAsync`) on the
+  engine thread, with no wait. Kotlin runs the function on a pool of the
+  core's and answers later with the event `answer(id, json)`, as `call`'s
+  answer, which resolves or rejects the Promise. An answer after the close
+  is dropped; a Promise left open ends with the engine. The glue turns the
+  setup's `{url, headers}` into a fetch `Request`, with the abort signal and
+  the core's `Range`.
 - **When JS does not take an event** (an exception, out of memory), the
   listener's error is reported, and the call fails at once: a query gives no
   value, a load fails.

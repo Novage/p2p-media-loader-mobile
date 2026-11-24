@@ -177,6 +177,40 @@ static JSValue player_call(JSContext *context, JSValueConst this_value, int argc
   return answer.value;
 }
 
+// playerCallAsync(function, id, json, bytes): calls the platform's async
+// function `function` with the argument `json` and the ArrayBuffer `bytes`, or
+// undefined for none; the platform answers later with the event answer(id, json).
+static JSValue player_call_async(JSContext *context, JSValueConst this_value, int argc,
+                                 JSValueConst *argv) {
+  (void)this_value;
+  (void)argc;
+  p2pml_player_client *client = &player_of(context)->client;
+  int32_t function = 0;
+  int32_t id = 0;
+  if (JS_ToInt32(context, &function, argv[0]) < 0 || JS_ToInt32(context, &id, argv[1]) < 0) {
+    return JS_EXCEPTION;
+  }
+  // The text first: its conversion can run JS, which could free the buffer's bytes.
+  size_t length = 0;
+  const char *json = JS_ToCStringLen(context, &length, argv[2]);
+  if (json == NULL) {
+    return JS_EXCEPTION;
+  }
+  const uint8_t *bytes = NULL;
+  size_t bytes_length = 0;
+  if (!JS_IsUndefined(argv[3])) {
+    bytes = JS_GetArrayBuffer(context, &bytes_length, argv[3]);
+    if (bytes == NULL) {
+      JS_FreeCString(context, json);
+      return JS_EXCEPTION;
+    }
+  }
+  client->call_async(client->data, function, id, (const uint8_t *)json, length, bytes,
+                     bytes_length);
+  JS_FreeCString(context, json);
+  return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry player_functions[] = {
     JS_CFUNC_DEF("playerListen", 1, player_listen),
     JS_CFUNC_MAGIC_DEF("playerValue", 2, player_answer, 0),
@@ -184,6 +218,7 @@ static const JSCFunctionListEntry player_functions[] = {
     JS_CFUNC_MAGIC_DEF("playerFail", 3, player_answer, 2),
     JS_CFUNC_DEF("playerCoreEvent", 2, player_core_event),
     JS_CFUNC_DEF("playerCall", 2, player_call),
+    JS_CFUNC_DEF("playerCallAsync", 4, player_call_async),
 };
 
 bool p2pml_player_add(JSContext *context, JSValueConst natives) {

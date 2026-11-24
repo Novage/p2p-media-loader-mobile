@@ -8,7 +8,10 @@
 //   segmentFilter, for both stream types or in mainStream or
 //   secondaryStream) is {function: n}: the core gets a JS function that
 //   calls natives.playerCall(n, json) with its argument, and gets
-//   {value} or {error: message} as JSON;
+//   {value} or {error: message} as JSON. An async one (httpRequestSetup,
+//   validateP2PSegment) returns a Promise: it calls
+//   natives.playerCallAsync(n, id, json, bytes), with the segment's bytes for
+//   the validator, and the platform answers later with answer(id, json);
 // - manifest(id, url, requestedUrl, data), loadable(id, url, range) and
 //   config(id): processManifest, isSegmentLoadable and getConfig, answered at
 //   once with natives.playerValue(id, json). In the answer of config, a
@@ -19,7 +22,9 @@
 // - streams(id), stream(id, runtimeId) and hasSegment(id, url, range):
 //   getStreams, getStream and hasSegment, answered at once in the same way;
 //   with no core, null, null and false;
-// - dynamicConfig(0, config): applyDynamicConfig, with `config` (JSON);
+// - dynamicConfig(0, config): applyDynamicConfig, with `config` (JSON), whose
+//   functions are markers as in start;
+// - answer(id, json): the answer of the async call `id`, as playerCall's;
 // - manifestResponseUrl(0, url): setManifestResponseUrl;
 // - load(id, url, range): loadSegment, answered once, later, with
 //   playerData(id, bytes, bandwidth, main) or playerFail(id, type, message);
@@ -40,11 +45,12 @@
     playerFail,
     playerCoreEvent,
     playerCall,
+    playerCallAsync,
     reportError,
   } = natives;
   // Kept now, so that a script that replaces these globals changes nothing
   // here.
-  const { JSON, Number, String, Uint8Array } = globalThis;
+  const { JSON, Number, String, Uint8Array, Headers, Request } = globalThis;
   const { toString } = Object.prototype;
 
   // The core, and its placement rules: undefined before start.
@@ -60,17 +66,65 @@
   // keeps a swarmId function's answer by function. `numbers` maps them back.
   const functions = new Map();
   const numbers = new Map();
-  const functionOf = (n) => {
+
+  // The value of a platform's answer, {value} or {error: message}, as JSON;
+  // throws the error.
+  const valueOf = (json) => {
+    const answer = JSON.parse(json);
+    if ("error" in answer) {
+      throw new Error(answer.error);
+    }
+    return answer.value;
+  };
+
+  // The async calls that have no answer yet, by id. The answer comes in a
+  // later task, so the call is kept after it is made: a throw of
+  // playerCallAsync rejects the Promise and keeps nothing.
+  const pending = new Map();
+  let lastCall = 0;
+  const callAsync = (n, argument, bytes) =>
+    new Promise((resolve, reject) => {
+      const id = ++lastCall;
+      playerCallAsync(n, id, JSON.stringify(argument), bytes);
+      pending.set(id, { resolve, reject });
+    });
+
+  // The async settings, by their keys: each gives the platform its
+  // arguments, and the core the answer in its shape.
+  const asyncSettings = {
+    __proto__: null,
+    // A request of the platform's: its URL and headers, with the core's
+    // Range unless it has one; null keeps the core's request.
+    httpRequestSetup:
+      (n) => async (segmentUrl, segmentByteRange, signal, requestByteRange) => {
+        const request = await callAsync(n, {
+          segmentUrl,
+          segmentByteRange,
+          requestByteRange,
+        });
+        if (request === null) {
+          return undefined;
+        }
+        const headers = new Headers(request.headers);
+        if (requestByteRange !== undefined && !headers.has("Range")) {
+          const { start, end } = requestByteRange;
+          headers.set("Range", `bytes=${start}-${end ?? ""}`);
+        }
+        return new Request(request.url, { headers, signal });
+      },
+    validateP2PSegment: (n) => (url, byteRange, data) =>
+      callAsync(n, { url, byteRange }, data),
+  };
+
+  // The function of the platform's n, of the setting `key`.
+  const functionOf = (n, key) => {
     let call = functions.get(n);
     if (call === undefined) {
-      call = (argument) => {
-        const answer = JSON.parse(playerCall(n, JSON.stringify(argument)));
-        if ("error" in answer) {
-          throw new Error(answer.error);
-        }
+      call =
+        asyncSettings[key]?.(n) ??
         // JSON has no undefined: a builder's undefined is null.
-        return answer.value ?? undefined;
-      };
+        ((argument) =>
+          valueOf(playerCall(n, JSON.stringify(argument))) ?? undefined);
       functions.set(n, call);
       numbers.set(call, n);
     }
@@ -83,7 +137,7 @@
     value !== null &&
     typeof value === "object" &&
     typeof value.function === "number"
-      ? functionOf(value.function)
+      ? functionOf(value.function, key)
       : value;
   const withMarkers = (key, value) =>
     numbers.has(value) ? { function: numbers.get(value) } : value;
@@ -274,7 +328,19 @@
     },
 
     dynamicConfig(id, config) {
-      core?.applyDynamicConfig(JSON.parse(config));
+      core?.applyDynamicConfig(JSON.parse(config, withFunctions));
+    },
+
+    answer(id, json) {
+      const call = pending.get(id);
+      if (call !== undefined) {
+        pending.delete(id);
+        try {
+          call.resolve(valueOf(json));
+        } catch (error) {
+          call.reject(error);
+        }
+      }
     },
 
     manifestResponseUrl(id, url) {

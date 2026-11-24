@@ -85,6 +85,20 @@ internal class CoreSession(
      */
     @Volatile var onCall: (function: Int, json: String) -> String? = { _, _ -> null }
 
+    /**
+     * Calls the platform's async [function] with its argument as JSON and its bytes, on the engine
+     * thread, with no wait: [answerCall] answers call `id` later.
+     */
+    @Volatile
+    var onCallAsync: (function: Int, id: Int, json: String, bytes: ByteArray?) -> Unit =
+        { _, _, _, _ ->
+        }
+
+    /** Any thread: the answer of async call [id], as JSON. Nothing once the engine is closed. */
+    fun answerCall(id: Int, json: String) {
+        port.send("answer", id, listOf(json)) {}
+    }
+
     /** The bridge's answer to call [id], on the engine thread. */
     fun answer(id: Int, answer: Answer) {
         calls.remove(id)?.complete(answer)

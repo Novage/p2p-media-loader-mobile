@@ -29,6 +29,7 @@ static jmethodID player_sink_segment;
 static jmethodID player_sink_fail;
 static jmethodID player_sink_core_event;
 static jmethodID player_sink_call;
+static jmethodID player_sink_call_async;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   (void)reserved;
@@ -104,8 +105,10 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
   player_sink_fail = (*env)->GetMethodID(env, player_sink, "fail", "(I[B[B)V");
   player_sink_core_event = (*env)->GetMethodID(env, player_sink, "coreEvent", "([B[B)V");
   player_sink_call = (*env)->GetMethodID(env, player_sink, "call", "(I[B)[B");
+  player_sink_call_async = (*env)->GetMethodID(env, player_sink, "callAsync", "(II[B[B)V");
   if (player_sink_value == NULL || player_sink_segment == NULL || player_sink_fail == NULL ||
-      player_sink_core_event == NULL || player_sink_call == NULL) {
+      player_sink_core_event == NULL || player_sink_call == NULL ||
+      player_sink_call_async == NULL) {
     return JNI_ERR;
   }
   return JNI_VERSION_1_6;
@@ -422,6 +425,28 @@ static void player_call(void *data, int32_t function, const uint8_t *json, size_
   close_on_exception(env, player->engine);
 }
 
+// The bytes, when there are some, are copied once into a Kotlin array.
+static void player_call_async(void *data, int32_t function, int32_t id, const uint8_t *json,
+                              size_t length, const uint8_t *bytes, size_t bytes_length) {
+  engine_sink *player = data;
+  JNIEnv *env = player->env;
+  if ((*env)->ExceptionCheck(env)) {
+    return;
+  }
+  jbyteArray argument = byte_array_of(env, json, length);
+  jbyteArray array = NULL;
+  if (argument != NULL && bytes != NULL) {
+    array = byte_array_of(env, bytes, bytes_length);
+  }
+  if (argument != NULL && (bytes == NULL || array != NULL)) {
+    (*env)->CallVoidMethod(env, player->sink, player_sink_call_async, (jint)function, (jint)id,
+                           argument, array);
+  }
+  (*env)->DeleteLocalRef(env, array);
+  (*env)->DeleteLocalRef(env, argument);
+  close_on_exception(env, player->engine);
+}
+
 JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv *env, jclass type,
                                                                          jlong handle, jobject sink,
                                                                          jobject http_sink,
@@ -440,6 +465,7 @@ JNIEXPORT jboolean JNICALL Java_com_novage_p2pml_engine_NativeEngine_run(JNIEnv 
                                        .fail = player_fail,
                                        .core_event = player_core_event,
                                        .call = player_call,
+                                       .call_async = player_call_async,
                                        .data = &player};
   return p2pml_engine_run(log.engine, write_log, &log, &http_client, &ws_client, &player_client);
 }
